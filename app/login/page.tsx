@@ -7,26 +7,27 @@ import { LockKeyhole, Mail } from "lucide-react";
 import { supabaseBrowser } from "@/lib/supabase/client";
 
 export default function LoginPage() {
-  const [email, setEmail] = useState("client@example.com");
-  const [password, setPassword] = useState("portal123");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [remember, setRemember] = useState(true);
   const [message, setMessage] = useState("");
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setMessage("Opening your portal...");
+    setMessage("Signing in...");
 
     const supabase = supabaseBrowser();
-    if (supabase) {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
-      if (!error) {
-        window.location.href = "/portal";
-        return;
-      }
-      setMessage("Demo mode is open. Add Supabase keys to enable real sign in.");
+    if (!supabase) {
+      setMessage("Sign in is currently unavailable. Please contact support.");
+      return;
     }
 
-    window.localStorage.setItem("legacy-demo-session", JSON.stringify({ email, remember }));
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) {
+      setMessage("Incorrect email or password. Please try again.");
+      return;
+    }
+
     window.location.href = "/portal";
   }
 
@@ -44,10 +45,6 @@ export default function LoginPage() {
           <p className="mt-5 leading-7 text-white/80">
             Sign in to see your service status, messages, documents, appointments, billing, and next steps.
           </p>
-          <div className="mt-8 rounded-2xl bg-white/10 p-4">
-            <p className="font-bold">Demo login</p>
-            <p className="mt-1 text-sm text-white/80">client@example.com / portal123</p>
-          </div>
         </div>
 
         <form onSubmit={handleSubmit} className="grid gap-5 p-6 sm:p-10">
