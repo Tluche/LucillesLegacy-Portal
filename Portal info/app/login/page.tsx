@@ -4,30 +4,34 @@ import Link from "next/link";
 import type React from "react";
 import { useState } from "react";
 import { LockKeyhole, Mail } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { supabaseBrowser } from "@/lib/supabase/client";
 
 export default function LoginPage() {
-  const [email, setEmail] = useState("client@example.com");
-  const [password, setPassword] = useState("portal123");
+  const router = useRouter();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [remember, setRemember] = useState(true);
-  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setMessage("Opening your portal...");
+    setError("");
+    setLoading(true);
 
     const supabase = supabaseBrowser();
-    if (supabase) {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
-      if (!error) {
-        window.location.href = "/portal";
-        return;
-      }
-      setMessage("Demo mode is open. Add Supabase keys to enable real sign in.");
+    const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+
+    setLoading(false);
+
+    if (signInError) {
+      setError("We couldn't sign you in. Please check your email and password and try again.");
+      return;
     }
 
-    window.localStorage.setItem("legacy-demo-session", JSON.stringify({ email, remember }));
-    window.location.href = "/portal";
+    router.push("/portal");
+    router.refresh();
   }
 
   return (
@@ -44,10 +48,6 @@ export default function LoginPage() {
           <p className="mt-5 leading-7 text-white/80">
             Sign in to see your service status, messages, documents, appointments, billing, and next steps.
           </p>
-          <div className="mt-8 rounded-2xl bg-white/10 p-4">
-            <p className="font-bold">Demo login</p>
-            <p className="mt-1 text-sm text-white/80">client@example.com / portal123</p>
-          </div>
         </div>
 
         <form onSubmit={handleSubmit} className="grid gap-5 p-6 sm:p-10">
@@ -101,11 +101,16 @@ export default function LoginPage() {
             </Link>
           </div>
 
-          <button className="rounded-lg bg-legacy-purple px-5 py-3 font-black text-white shadow-soft transition hover:bg-legacy-plum">
-            Sign in
+          <button
+            disabled={loading}
+            className="rounded-lg bg-legacy-purple px-5 py-3 font-black text-white shadow-soft transition hover:bg-legacy-plum disabled:opacity-60"
+          >
+            {loading ? "Signing in..." : "Sign in"}
           </button>
 
-          {message ? <p className="rounded-lg bg-legacy-lavender p-3 text-sm text-legacy-plum">{message}</p> : null}
+          {error ? (
+            <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p>
+          ) : null}
         </form>
       </section>
     </main>
