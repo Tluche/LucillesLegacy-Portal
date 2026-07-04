@@ -16,14 +16,15 @@ import {
   ShieldCheck,
   User,
   Users,
-  X
+  X,
+  type LucideIcon
 } from "lucide-react";
 import type { UserRole } from "@/lib/types";
 
 type NavItem = {
   id: string;
   label: string;
-  icon: React.ComponentType<{ size?: number; className?: string }>;
+  icon: LucideIcon;
 };
 
 const clientItems: NavItem[] = [
