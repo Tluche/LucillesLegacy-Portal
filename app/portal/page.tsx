@@ -676,7 +676,7 @@ function AdminLeads() {
         <div>
         <p className="font-black text-legacy-ink">{lead.full_name}</p>
         <p className="text-sm text-legacy-muted">{lead.email} • {lead.phone} • {lead.city}, {lead.state}</p>
-        <p className="mt-2 text-xs text-legacy-muted">Services: {Array.isArray(lead.services_needed) ? lead.services_needed.join(", ") : "-"} • Submitted {new Date(lead.submitted_at).toLocaleString()}</p></>
+        <p className="mt-2 text-xs text-legacy-muted">Services: {Array.isArray(lead.services_needed) ? lead.services_needed.join(", ") : "-"} • Submitted {new Date(lead.submitted_at).toLocaleString()}</p>
           </div>
         <div className="flex items-center gap-3">
         <StatusPill tone={lead.status === "Approved" ? "green" : "amber"}>{lead.status}</StatusPill>
