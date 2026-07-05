@@ -1,7 +1,7 @@
 "use client";
 
 import type React from "react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Banknote,
   Bell,
@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { PortalShell } from "@/components/portal-shell";
 import { PageHeader, StatCard, StatusPill } from "@/components/ui";
+import { supabaseBrowser } from "@/lib/supabase/client";
 import {
   appointments,
   clientProfile,
@@ -31,7 +32,7 @@ import {
   resources,
   serviceTrackers
 } from "@/lib/demo-data";
-import type { DocumentCategory, PortalDocument, UserRole } from "@/lib/types";
+import type { DocumentCategory, PortalDocument, UserRole, ServiceTracker } from "@/lib/types";
 
 const categories: DocumentCategory[] = ["Tax", "Credit", "Bookkeeping", "Life Insurance", "General"];
 
@@ -44,12 +45,59 @@ export default function PortalPage() {
 
   const visibleMessages = useMemo(() => messages, []);
 
+  const [realName, setRealName] = useState<string | null>(null);
+  const [realServices, setRealServices] = useState<ServiceTracker[]>([]);
+
+  useEffect(() => {
+    const supabase = supabaseBrowser();
+    if (!supabase) return;
+
+    supabase.auth.getUser().then(async (result) => {
+      const user = result.data.user;
+      if (!user) return;
+
+      const profileResult = await supabase.from("profiles").select("role, full_name").eq("id", user.id).single();
+      const profile = profileResult.data;
+      if (!profile) return;
+
+      setRealName(profile.full_name);
+      setRole(profile.role as UserRole);
+      setActive(profile.role === "admin" ? "admin" : "dashboard");
+
+      const clientResult = await supabase.from("clients").select("id").eq("profile_id", user.id).single();
+      const client = clientResult.data;
+      if (!client) return;
+
+      const csResult = await supabase
+      .from("client_services")
+      .select("id, current_stage, progress, admin_notes, next_step, last_updated, services(name, slug, stages)")
+      .eq("client_id", client.id);
+      const csRows: any = csResult.data;
+      if (csRows) {
+        const mapped = csRows.map((row: any) => ({
+          key: row.services.slug,
+          name: row.services.name,
+          currentStage: row.current_stage,
+          progress: row.progress,
+          lastUpdated: row.last_updated,
+          adminNotes: row.admin_notes || "",
+          nextStep: row.next_step || "",
+          stages: row.services.stages
+        }));
+        setRealServices(mapped);
+      }
+    });
+  }, []);
+
+  const displayName = realName || clientProfile.name;
+  const displayServices = realServices.length > 0 ? realServices : serviceTrackers;
+
   return (
     <PortalShell role={role} active={active} onChange={setActive}>
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="text-sm font-bold text-legacy-muted">Signed in as</p>
-          <p className="font-black text-legacy-ink">{role === "admin" ? "Business Owner" : clientProfile.name}</p>
+          <p className="font-black text-legacy-ink">{role === "admin" ? "Business Owner" : displayName}</p>
         </div>
         <div className="flex rounded-xl border border-legacy-silver bg-white p-1">
           <button
@@ -75,7 +123,7 @@ export default function PortalPage() {
 
       {role === "client" ? (
         <>
-          {active === "dashboard" && <Dashboard />}
+          {active === "dashboard" && <Dashboard displayName={displayName} displayServices={displayServices} />}
           {active === "messages" && (
             <Messages messageText={messageText} setMessageText={setMessageText} visibleMessages={visibleMessages} />
           )}
@@ -96,6 +144,7 @@ export default function PortalPage() {
       ) : (
         <>
           {active === "admin" && <AdminHome />}
+          {active === "admin-leads" && <AdminLeads />}
           {active === "admin-clients" && <AdminClients />}
           {active === "admin-documents" && <AdminDocuments />}
           {active === "admin-messages" && <AdminMessages />}
@@ -106,17 +155,17 @@ export default function PortalPage() {
   );
 }
 
-function Dashboard() {
+function Dashboard({ displayName, displayServices }: { displayName: string; displayServices: ServiceTracker[] }) {
   return (
     <>
       <PageHeader
         eyebrow="Dashboard"
-        title={`Welcome, ${clientProfile.name.split(" ")[0]}`}
+        title={`Welcome, ${displayName.split(" ")[0]}`}
         description="Here is what is happening with your services, what we need from you, and what happens next."
         action={<button className="rounded-lg bg-legacy-purple px-5 py-3 font-black text-white">Upload document</button>}
       />
       <div className="grid gap-4 md:grid-cols-3">
-        <StatCard label="Current services" value="4" note="Tax, credit, bookkeeping, and life insurance support." icon={ClipboardList} />
+        <StatCard label="Current services" value={String(displayServices.length)} note="Tax, credit, bookkeeping, and life insurance support." icon={ClipboardList} />
         <StatCard label="Next step" value="Upload" note="Childcare receipts are needed for your tax return." icon={FolderUp} />
         <StatCard label="Upcoming" value="Jul 12" note="Tax review call at 2:00 PM." icon={CalendarDays} />
       </div>
@@ -128,7 +177,7 @@ function Dashboard() {
             <StatusPill>On track</StatusPill>
           </div>
           <div className="grid gap-4">
-            {serviceTrackers.map((service) => (
+            {displayServices.map((service) => (
               <div key={service.key} className="rounded-2xl border border-legacy-silver p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
@@ -575,6 +624,74 @@ function AdminHome() {
       </section>
     </>
   );
+}
+
+function AdminLeads() {
+  const [leads, setLeads] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [error, setError] = useState("");
+
+  async function loadLeads() {
+    const supabase = supabaseBrowser();
+    if (!supabase) { setLoading(false); return; }
+    const result = await supabase.from("leads").select("*").order("submitted_at", { ascending: false });
+    if (result.error) setError(result.error.message);
+    setLeads(result.data || []);
+    setLoading(false);
+  }
+
+  useEffect(() => { loadLeads(); }, []);
+
+  async function approve(leadId: string) {
+    setBusyId(leadId);
+    setError("");
+    const res = await fetch("/api/leads/approve", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ leadId })
+    });
+    const json = await res.json();
+    if (!res.ok) {
+      setError(json.error || "Something went wrong approving this lead.");
+    } else {
+      await loadLeads();
+    }
+    setBusyId(null);
+  }
+
+  return (
+    <>
+    <PageHeader eyebrow="Admin" title="Leads" description="New intake form submissions. Approve a lead to create their client account and portal access." />
+      {error ? <p className="mb-4 rounded-lg bg-red-50 p-3 text-sm text-red-600">{error}</p> : null}
+    <section className="soft-panel p-5">
+      {loading ? (
+      <p className="text-legacy-muted">Loading leads...</p>
+      ) : leads.length === 0 ? (
+      <p className="text-legacy-muted">No leads yet.</p>
+      ) : (
+      <div className="grid gap-3">
+        {leads.map((lead) => (
+        <div key={lead.id} className="flex flex-col justify-between gap-3 rounded-xl border border-legacy-silver p-4 sm:flex-row sm:items-start">
+        <div>
+        <p className="font-black text-legacy-ink">{lead.full_name}</p>
+        <p className="text-sm text-legacy-muted">{lead.email} • {lead.phone} • {lead.city}, {lead.state}</p>
+        <p className="mt-2 text-xs text-legacy-muted">Services: {Array.isArray(lead.services_needed) ? lead.services_needed.join(", ") : "-"} • Submitted {new Date(lead.submitted_at).toLocaleString()}</p></>
+          </div>
+        <div className="flex items-center gap-3">
+        <StatusPill tone={lead.status === "Approved" ? "green" : "amber"}>{lead.status}</StatusPill>
+        {lead.status !== "Approved" ? (
+        <button onClick={() => approve(lead.id)} disabled={busyId === lead.id} className="rounded-lg bg-legacy-purple px-4 py-2 text-sm font-black text-white disabled:opacity-50">
+          {busyId === lead.id ? "Approving..." : "Approve"}</button>
+        ) : null}
+        </div>
+      </div>
+      ))}
+      </div>
+      )}
+      </section>
+    </>
+    );
 }
 
 function AdminClients() {
