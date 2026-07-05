@@ -16,6 +16,7 @@ import {
   ShieldCheck,
   User,
   Users,
+  UserPlus,
   X,
   type LucideIcon
 } from "lucide-react";
@@ -40,6 +41,7 @@ const clientItems: NavItem[] = [
 
 const adminItems: NavItem[] = [
   { id: "admin", label: "Admin Home", icon: Users },
+  { id: "admin-leads", label: "Leads", icon: UserPlus },
   { id: "admin-clients", label: "Clients", icon: User },
   { id: "admin-documents", label: "Documents", icon: FolderUp },
   { id: "admin-messages", label: "Messages", icon: MessageSquare },
