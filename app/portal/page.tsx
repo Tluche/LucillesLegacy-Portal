@@ -191,7 +191,20 @@ export default function PortalPage() {
   );
 }
 
-function Dashboard({ displayName, displayServices }: { displayName: string; displayServices: ServiceTracker[] }) {
+function Dashboard({
+  displayName,
+  displayServices,
+  displayNotifications,
+  displayAppointments
+}: {
+  displayName: string;
+  displayServices: ServiceTracker[];
+  displayNotifications: { id: string; title: string; text: string }[];
+  displayAppointments: { id: string; title: string; date: string; time: string; status: string }[];
+}) {
+  const upcomingAppointment = displayAppointments.find((appointment) => appointment.status === "Upcoming");
+  const nextStepService = displayServices.find((service) => service.nextStep);
+
   return (
     <>
       <PageHeader
@@ -202,8 +215,18 @@ function Dashboard({ displayName, displayServices }: { displayName: string; disp
       />
       <div className="grid gap-4 md:grid-cols-3">
         <StatCard label="Current services" value={String(displayServices.length)} note="Tax, credit, bookkeeping, and life insurance support." icon={ClipboardList} />
-        <StatCard label="Next step" value="Upload" note="Childcare receipts are needed for your tax return." icon={FolderUp} />
-        <StatCard label="Upcoming" value="Jul 12" note="Tax review call at 2:00 PM." icon={CalendarDays} />
+        <StatCard
+          label="Next step"
+          value={nextStepService ? "Action needed" : "All set"}
+          note={nextStepService ? nextStepService.nextStep : "You are all caught up for now."}
+          icon={FolderUp}
+        />
+        <StatCard
+          label="Upcoming"
+          value={upcomingAppointment ? upcomingAppointment.date : "None"}
+          note={upcomingAppointment ? `${upcomingAppointment.title} at ${upcomingAppointment.time}` : "No appointments scheduled yet."}
+          icon={CalendarDays}
+        />
       </div>
 
       <div className="mt-6 grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
@@ -235,7 +258,10 @@ function Dashboard({ displayName, displayServices }: { displayName: string; disp
           <div className="soft-panel p-5">
             <h2 className="text-xl font-black text-legacy-ink">Recent notifications</h2>
             <div className="mt-4 grid gap-3">
-              {notifications.slice(0, 4).map((note) => (
+              {displayNotifications.length === 0 && (
+                <p className="text-sm text-legacy-muted">No notifications yet.</p>
+              )}
+              {displayNotifications.slice(0, 4).map((note) => (
                 <div key={note.id} className="flex gap-3 rounded-xl bg-legacy-lavender/60 p-3">
                   <Bell size={18} className="mt-1 shrink-0 text-legacy-purple" />
                   <div>
@@ -250,7 +276,10 @@ function Dashboard({ displayName, displayServices }: { displayName: string; disp
           <div className="soft-panel p-5">
             <h2 className="text-xl font-black text-legacy-ink">Upcoming appointments</h2>
             <div className="mt-4 grid gap-3">
-              {appointments.filter((appointment) => appointment.status === "Upcoming").map((appointment) => (
+              {displayAppointments.filter((appointment) => appointment.status === "Upcoming").length === 0 && (
+                <p className="text-sm text-legacy-muted">No upcoming appointments scheduled.</p>
+              )}
+              {displayAppointments.filter((appointment) => appointment.status === "Upcoming").map((appointment) => (
                 <div key={appointment.id} className="rounded-xl border border-legacy-silver p-3">
                   <p className="font-bold text-legacy-ink">{appointment.title}</p>
                   <p className="text-sm text-legacy-muted">{appointment.date} at {appointment.time}</p>
@@ -263,7 +292,6 @@ function Dashboard({ displayName, displayServices }: { displayName: string; disp
     </>
   );
 }
-
 function Messages({
   visibleMessages,
   messageText,
