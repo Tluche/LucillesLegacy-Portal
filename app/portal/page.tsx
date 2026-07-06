@@ -45,8 +45,11 @@ export default function PortalPage() {
 
   const visibleMessages = useMemo(() => messages, []);
 
-  const [realName, setRealName] = useState<string | null>(null);
+    const [realName, setRealName] = useState<string | null>(null);
   const [realServices, setRealServices] = useState<ServiceTracker[]>([]);
+  const [realClientId, setRealClientId] = useState<string | null>(null);
+  const [realNotifications, setRealNotifications] = useState<{ id: string; title: string; text: string }[]>([]);
+  const [realAppointments, setRealAppointments] = useState<{ id: string; title: string; date: string; time: string; status: string }[]>([]);
 
   useEffect(() => {
     const supabase = supabaseBrowser();
@@ -68,10 +71,12 @@ export default function PortalPage() {
       const client = clientResult.data;
       if (!client) return;
 
+      setRealClientId(client.id);
+
       const csResult = await supabase
-      .from("client_services")
-      .select("id, current_stage, progress, admin_notes, next_step, last_updated, services(name, slug, stages)")
-      .eq("client_id", client.id);
+        .from("client_services")
+        .select("id, current_stage, progress, admin_notes, next_step, last_updated, services(name, slug, stages)")
+        .eq("client_id", client.id);
       const csRows: any = csResult.data;
       if (csRows) {
         const mapped = csRows.map((row: any) => ({
@@ -86,11 +91,42 @@ export default function PortalPage() {
         }));
         setRealServices(mapped);
       }
+
+      const notifResult = await supabase
+        .from("notifications")
+        .select("id, title, body, created_at")
+        .eq("client_id", client.id)
+        .order("created_at", { ascending: false })
+        .limit(4);
+      const notifRows: any = notifResult.data;
+      if (notifRows) {
+        setRealNotifications(notifRows.map((row: any) => ({ id: row.id, title: row.title, text: row.body })));
+      }
+
+      const apptResult = await supabase
+        .from("appointments")
+        .select("id, title, starts_at, status")
+        .eq("client_id", client.id)
+        .order("starts_at", { ascending: true });
+      const apptRows: any = apptResult.data;
+      if (apptRows) {
+        setRealAppointments(
+          apptRows.map((row: any) => ({
+            id: row.id,
+            title: row.title,
+            date: new Date(row.starts_at).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+            time: new Date(row.starts_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }),
+            status: row.status
+          }))
+        );
+      }
     });
   }, []);
 
   const displayName = realName || clientProfile.name;
   const displayServices = realServices.length > 0 ? realServices : serviceTrackers;
+  const displayNotifications = realClientId ? realNotifications : notifications;
+  const displayAppointments = realClientId ? realAppointments : appointments;
 
   return (
     <PortalShell role={role} active={active} onChange={setActive}>
