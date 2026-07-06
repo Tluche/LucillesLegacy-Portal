@@ -855,6 +855,38 @@ function AdminLeads() {
 }
 
 function AdminClients() {
+  const [clientRows, setClientRows] = useState<
+    { id: string; name: string; email: string; services: string; status: string; nextStep: string }[]
+  >([]);
+
+  useEffect(() => {
+    const supabase = supabaseBrowser();
+    if (!supabase) return;
+
+    (async () => {
+      const clientsResult = await supabase
+        .from("clients")
+        .select("id, status, profiles(full_name, email), client_services(current_stage, next_step, services(name))");
+      const rows: any = clientsResult.data || [];
+
+      setClientRows(
+        rows.map((row: any) => {
+          const services = (row.client_services || []) as any[];
+          const serviceNames = services.map((cs) => cs.services?.name).filter(Boolean).join(", ");
+          const nextStep = services.find((cs) => cs.next_step)?.next_step;
+          return {
+            id: row.id,
+            name: row.profiles?.full_name || "Unknown client",
+            email: row.profiles?.email || "",
+            services: serviceNames || "No services assigned yet",
+            status: row.status || "Active",
+            nextStep: nextStep || "No pending next step."
+          };
+        })
+      );
+    })();
+  }, []);
+
   return (
     <>
       <PageHeader eyebrow="Admin" title="Client management" description="Add clients, assign services, and update tracker notes." />
@@ -872,15 +904,20 @@ function AdminClients() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-legacy-silver">
-                {clients.map((client) => (
+                {clientRows.length === 0 && (
+                  <tr>
+                    <td className="py-4 text-sm text-legacy-muted" colSpan={4}>No clients yet. Approve a lead to add your first client.</td>
+                  </tr>
+                )}
+                {clientRows.map((client) => (
                   <tr key={client.id}>
                     <td className="py-4">
                       <p className="font-black text-legacy-ink">{client.name}</p>
                       <p className="text-sm text-legacy-muted">{client.email}</p>
                     </td>
-                    <td>Tax, Credit</td>
-                    <td><StatusPill>Active</StatusPill></td>
-                    <td className="text-legacy-muted">Confirm next document request.</td>
+                    <td>{client.services}</td>
+                    <td><StatusPill>{client.status}</StatusPill></td>
+                    <td className="text-legacy-muted">{client.nextStep}</td>
                   </tr>
                 ))}
               </tbody>
@@ -904,7 +941,6 @@ function AdminClients() {
     </>
   );
 }
-
 function AdminDocuments() {
   return (
     <>
