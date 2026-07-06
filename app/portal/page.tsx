@@ -557,6 +557,39 @@ function Resources() {
 }
 
 function Profile() {
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [passwordMessage, setPasswordMessage] = useState("");
+  const [passwordSaving, setPasswordSaving] = useState(false);
+
+  async function handlePasswordChange(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setPasswordMessage("");
+    if (newPassword.length < 8) {
+      setPasswordMessage("Password must be at least 8 characters.");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordMessage("Passwords do not match.");
+      return;
+    }
+    const supabase = supabaseBrowser();
+    if (!supabase) {
+      setPasswordMessage("Password update is currently unavailable.");
+      return;
+    }
+    setPasswordSaving(true);
+    const result = await supabase.auth.updateUser({ password: newPassword });
+    setPasswordSaving(false);
+    if (result.error) {
+      setPasswordMessage(result.error.message);
+    } else {
+      setPasswordMessage("Password updated successfully.");
+      setNewPassword("");
+      setConfirmPassword("");
+    }
+  }
+  
   return (
     <>
       <PageHeader
@@ -589,6 +622,21 @@ function Profile() {
           <button className="rounded-lg bg-legacy-purple px-5 py-3 font-black text-white">Save profile</button>
         </div>
       </form>
+      <form onSubmit={handlePasswordChange} className="soft-panel mt-5 grid gap-4 p-5 md:grid-cols-2">
+      <div className="md:col-span-2"><h2 className="text-xl font-black text-legacy-ink">Change password</h2>
+      <p className="mt-1 text-sm text-legacy-muted">Update the password you use to sign in to this portal.</p>
+      </div>
+      <label className="grid gap-2 font-bold text-legacy-ink">
+      New password
+      <input type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} className="rounded-lg border border-legacy-silver px-3 py-3 font-normal" minLength={8} required /></label>
+        <label className="grid gap-2 font-bold text-legacy-ink">
+        Confirm new password
+        <input type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} className="rounded-lg border border-legacy-silver px-3 py-3 font-normal" minLength={8} required /></label>
+        <div className="md:col-span-2">
+        <button disabled={passwordSaving} className="rounded-lg bg-legacy-purple px-5 py-3 font-black text-white disabled:opacity-50">{passwordSaving ? "Saving..." : "Update password"}</button>
+          {passwordMessage ? <p className="mt-3 text-sm text-legacy-plum">{passwordMessage}</p> : null}
+          </div>
+        </form>
     </>
   );
 }
