@@ -706,6 +706,52 @@ function Profile() {
 }
 
 function AdminHome() {
+  const [stats, setStats] = useState({ clients: 0, documents: 0, unread: 0, billingCents: 0 });
+  const [attentionClients, setAttentionClients] = useState<
+    { id: string; name: string; email: string; preferredContact: string; needsDocument: boolean }[]
+  >([]);
+
+  useEffect(() => {
+    const supabase = supabaseBrowser();
+    if (!supabase) return;
+
+    (async () => {
+      const [clientsResult, documentsResult, needsUpdateResult, messagesResult, invoicesResult] = await Promise.all([
+        supabase.from("clients").select("id, profiles(full_name, email, preferred_contact)"),
+        supabase.from("documents").select("id, status"),
+        supabase.from("documents").select("client_id").eq("status", "Needs update"),
+        supabase.from("messages").select("id").is("read_at", null),
+        supabase.from("invoices").select("amount_cents").eq("status", "Due")
+      ]);
+
+      const clientRows: any = clientsResult.data || [];
+      const documentRows: any = documentsResult.data || [];
+      const needsUpdateRows: any = needsUpdateResult.data || [];
+      const messageRows: any = messagesResult.data || [];
+      const invoiceRows: any = invoicesResult.data || [];
+
+      const needsDocSet = new Set(needsUpdateRows.map((row: any) => row.client_id));
+      const billingCents = invoiceRows.reduce((sum: number, row: any) => sum + (row.amount_cents || 0), 0);
+
+      setStats({
+        clients: clientRows.length,
+        documents: documentRows.length,
+        unread: messageRows.length,
+        billingCents
+      });
+
+      setAttentionClients(
+        clientRows.map((row: any) => ({
+          id: row.id,
+          name: row.profiles?.full_name || "Unknown client",
+          email: row.profiles?.email || "",
+          preferredContact: row.profiles?.preferred_contact || "Email",
+          needsDocument: needsDocSet.has(row.id)
+        }))
+      );
+    })();
+  }, []);
+
   return (
     <>
       <PageHeader
@@ -715,21 +761,24 @@ function AdminHome() {
         action={<button className="inline-flex items-center gap-2 rounded-lg bg-legacy-purple px-5 py-3 font-black text-white"><Plus size={18} /> Add client</button>}
       />
       <div className="grid gap-4 md:grid-cols-4">
-        <StatCard label="Clients" value={String(clients.length)} note="Active portal clients." icon={Users} />
-        <StatCard label="Documents" value={String(documents.length)} note="Files waiting in review." icon={FolderUp} />
-        <StatCard label="Unread" value="3" note="Messages needing response." icon={MessageSquare} />
-        <StatCard label="Open billing" value="$425" note="One invoice currently due." icon={Banknote} />
+        <StatCard label="Clients" value={String(stats.clients)} note="Active portal clients." icon={Users} />
+        <StatCard label="Documents" value={String(stats.documents)} note="Files waiting in review." icon={FolderUp} />
+        <StatCard label="Unread" value={String(stats.unread)} note="Messages needing response." icon={MessageSquare} />
+        <StatCard label="Open billing" value={`$${(stats.billingCents / 100).toLocaleString()}`} note="Total currently due." icon={Banknote} />
       </div>
       <section className="soft-panel mt-5 p-5">
         <h2 className="text-xl font-black text-legacy-ink">Clients needing attention</h2>
         <div className="mt-4 grid gap-3">
-          {clients.map((client, index) => (
+          {attentionClients.length === 0 && (
+            <p className="text-sm text-legacy-muted">No clients yet. Approve a lead to add your first client.</p>
+          )}
+          {attentionClients.map((client) => (
             <div key={client.id} className="flex flex-col justify-between gap-3 rounded-xl border border-legacy-silver p-4 sm:flex-row sm:items-center">
               <div>
                 <p className="font-black text-legacy-ink">{client.name}</p>
                 <p className="text-sm text-legacy-muted">{client.email} • {client.preferredContact}</p>
               </div>
-              <StatusPill tone={index === 0 ? "amber" : "purple"}>{index === 0 ? "Needs document" : "On track"}</StatusPill>
+              <StatusPill tone={client.needsDocument ? "amber" : "purple"}>{client.needsDocument ? "Needs document" : "On track"}</StatusPill>
             </div>
           ))}
         </div>
@@ -737,7 +786,6 @@ function AdminHome() {
     </>
   );
 }
-
 function AdminLeads() {
   const [leads, setLeads] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
