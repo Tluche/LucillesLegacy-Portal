@@ -159,7 +159,7 @@ export default function PortalPage() {
 
       {role === "client" ? (
         <>
-          {active === "dashboard" && <Dashboard displayName={displayName} displayServices={displayServices} />}
+          {active === "dashboard" && <Dashboard displayName={displayName} displayServices={displayServices} displayNotifications={displayNotifications} displayAppointments={displayAppointments} />}
           {active === "messages" && (
             <Messages messageText={messageText} setMessageText={setMessageText} visibleMessages={visibleMessages} />
           )}
