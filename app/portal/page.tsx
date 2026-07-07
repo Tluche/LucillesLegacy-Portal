@@ -31,6 +31,8 @@ notifications,
 serviceTrackers
 } from "@/lib/demo-data";
 import type { DocumentCategory, UserRole, ServiceTracker } from "@/lib/types";
+import { ClientBilling } from "@/components/billing-client";
+import { AdminBillingPanel } from "@/components/billing-admin";
 
 const categories: DocumentCategory[] = ["Tax", "Credit", "Bookkeeping", "Life Insurance", "General"];
 
@@ -162,7 +164,7 @@ Admin view
 {active === "documents" && <Documents clientId={realClientId} />}
 {active === "status" && <ServiceStatus />}
 {active === "appointments" && <Appointments />}
-{active === "billing" && <Billing clientId={realClientId} />}
+{active === "billing" && <ClientBilling clientId={realClientId} />}
 {active === "resources" && <Resources />}
 {active === "profile" && <Profile />}
 </>
@@ -174,7 +176,7 @@ Admin view
 {active === "admin-documents" && <AdminDocuments />}
 {active === "admin-resources" && <AdminResources />}
 {active === "admin-messages" && <AdminMessages />}
-{active === "admin-billing" && <AdminBilling />}
+{active === "admin-billing" && <AdminBillingPanel />}
 </>
 )}
 </PortalShell>
