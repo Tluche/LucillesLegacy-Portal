@@ -34,7 +34,7 @@ const clientItems: NavItem[] = [
 { id: "documents", label: "Upload Documents", icon: FolderUp },
 { id: "status", label: "Service Status", icon: ShieldCheck },
 { id: "appointments", label: "Appointments", icon: CalendarDays },
-{ id: "billing", label: "Billing", icon: CreditCard },
+{ id: "billing", label: "Billing & Payments", icon: CreditCard },
 { id: "resources", label: "Resources", icon: FileText },
 { id: "profile", label: "Profile", icon: User }
 ];
@@ -46,7 +46,7 @@ const adminItems: NavItem[] = [
 { id: "admin-documents", label: "Documents", icon: FolderUp },
 { id: "admin-resources", label: "Resources", icon: FileText },
 { id: "admin-messages", label: "Messages", icon: MessageSquare },
-{ id: "admin-billing", label: "Billing", icon: CreditCard }
+{ id: "admin-billing", label: "Billing & Payments", icon: CreditCard }
 ];
 
 export function PortalShell({
