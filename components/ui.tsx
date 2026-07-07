@@ -50,12 +50,13 @@ export function EmptyState({ title, text }: { title: string; text: string }) {
   );
 }
 
-export function StatusPill({ children, tone = "purple" }: { children: React.ReactNode; tone?: "purple" | "green" | "gray" | "amber" }) {
+export function StatusPill({ children, tone = "purple" }: { children: React.ReactNode; tone?: "purple" | "green" | "gray" | "amber"  | "red"}) {
   const styles = {
     purple: "bg-legacy-lavender text-legacy-plum",
     green: "bg-emerald-50 text-emerald-700",
     gray: "bg-slate-100 text-slate-700",
-    amber: "bg-amber-50 text-amber-700"
+    amber: "bg-amber-50 text-amber-700",
+        red: "bg-red-50 text-red-700"
   };
 
   return <span className={`rounded-full px-3 py-1 text-xs font-black ${styles[tone]}`}>{children}</span>;
