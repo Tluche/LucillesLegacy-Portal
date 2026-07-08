@@ -133,26 +133,6 @@ return (
 <p className="text-sm font-bold text-legacy-muted">Signed in as</p>
 <p className="font-black text-legacy-ink">{role === "admin" ? "Tia" : displayName}</p>
 </div>
-<div className="flex rounded-xl border border-legacy-silver bg-white p-1">
-<button
-onClick={() => {
-setRole("client");
-setActive("dashboard");
-}}
-className={`rounded-lg px-4 py-2 text-sm font-black ${role === "client" ? "bg-legacy-purple text-white" : "text-legacy-muted"}`}
->
-Client view
-</button>
-<button
-onClick={() => {
-setRole("admin");
-setActive("admin");
-}}
-className={`rounded-lg px-4 py-2 text-sm font-black ${role === "admin" ? "bg-legacy-purple text-white" : "text-legacy-muted"}`}
->
-Admin view
-</button>
-</div>
 </div>
 
 {role === "client" ? (
