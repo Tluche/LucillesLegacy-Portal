@@ -356,6 +356,7 @@ const [selectedCategory, setSelectedCategory] = useState<DocumentCategory>("Tax"
 const [loading, setLoading] = useState(true);
 const [uploading, setUploading] = useState(false);
 const [error, setError] = useState("");
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
 async function loadDocuments() {
 const supabase = supabaseBrowser();
@@ -385,8 +386,12 @@ const form = event.currentTarget;
 const formData = new FormData(form);
 const file = formData.get("file") as File | null;
 
-if (!file?.name || !clientId) return;
-
+if (!file?.name) {
+  setError("Please choose a file before uploading.");
+  return;
+}
+  if (!clientId) return;
+  
 const supabase = supabaseBrowser();
 if (!supabase) {
 setError("Document upload is currently unavailable.");
@@ -465,8 +470,8 @@ className="rounded-lg border border-legacy-silver px-3 py-3"
 </label>
 <label className="grid gap-3 rounded-2xl border border-dashed border-legacy-purple bg-legacy-lavender/60 p-5 text-center font-bold text-legacy-plum">
 <Upload className="mx-auto" size={28} />
-Select a file
-<input name="file" type="file" className="sr-only" required />
+  {selectedFile ? selectedFile.name : "Select a file"}
+<input name="file" type="file" className="sr-only" required onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)} />
 </label>
 <button disabled={uploading} className="rounded-lg bg-legacy-purple px-5 py-3 font-black text-white disabled:opacity-50">
 {uploading ? "Uploading..." : "Upload document"}
