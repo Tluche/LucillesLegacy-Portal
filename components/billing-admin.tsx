@@ -126,19 +126,36 @@ export function AdminBillingPanel() {
     setStatusBusyId(invoiceId);
     const supabase = supabaseBrowser();
     if (!supabase) return;
+    const invoice = invoices.find((row) => row.id === invoiceId);
     const patch: any = { status };
-    if (status === "Paid") {
-      const invoice = invoices.find((row) => row.id === invoiceId);
-      if (invoice) {
-        patch.amount_paid_cents = invoice.amount_cents;
-        patch.paid_at = new Date().toISOString();
-      }
+    if (status === "Paid" && invoice) {
+      patch.amount_paid_cents = invoice.amount_cents;
+      patch.paid_at = new Date().toISOString();
     }
     const result = await supabase.from("invoices").update(patch).eq("id", invoiceId);
     setStatusBusyId(null);
     if (result.error) {
       setActionError(result.error.message);
       return;
+    }
+    if (invoice) {
+      const title = status === "Paid" ? ("Payment received: " + invoice.label) : ("Invoice status updated: " + invoice.label);
+      const description = "Status changed to " + status + ".";
+      await supabase.from("client_timeline").insert({
+        client_id: invoice.client_id,
+        event_type: status === "Paid" ? "payment_received" : "invoice_status_changed",
+        title,
+        description,
+        metadata: { invoice_id: invoiceId, status }
+      });
+      const notifyTitle = status === "Paid" ? "Payment received" : "Invoice updated";
+      const notifyBody = status === "Paid" ? ("We received your payment for " + invoice.label + ". Thank you!") : (invoice.label + " status is now " + status + ".");
+      await supabase.from("notifications").insert({
+        client_id: invoice.client_id,
+        title: notifyTitle,
+        body: notifyBody,
+        kind: status === "Paid" ? "payment_received" : "invoice_ready"
+      });
     }
     await loadAll();
   }
