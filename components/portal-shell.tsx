@@ -31,6 +31,7 @@ icon: LucideIcon;
 
 const clientItems: NavItem[] = [
 { id: "dashboard", label: "Dashboard", icon: Home },
+{ id: "notifications", label: "Notifications", icon: Bell },
 { id: "messages", label: "Messages", icon: MessageSquare },
 { id: "documents", label: "Upload Documents", icon: FolderUp },
 { id: "status", label: "Service Status", icon: ShieldCheck },
