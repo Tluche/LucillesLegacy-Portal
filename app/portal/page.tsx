@@ -448,11 +448,15 @@ await loadDocuments();
 }
 
 async function viewDocument(storagePath: string) {
+const newTab = window.open("", "_blank");
 const supabase = supabaseBrowser();
-if (!supabase) return;
+if (!supabase) { newTab?.close(); return; }
 const result = await supabase.storage.from("CLIENT DOCUMENTS").createSignedUrl(storagePath, 60);
-if (result.data?.signedUrl) {
-window.open(result.data.signedUrl, "_blank");
+if (result.data?.signedUrl && newTab) {
+newTab.location.href = result.data.signedUrl;
+} else {
+setError("Unable to open this file. It may no longer exist in storage.");
+newTab?.close();
 }
 }
 
@@ -1499,16 +1503,37 @@ className="rounded-lg border border-legacy-silver px-3 py-2 text-sm font-bold te
 );
 }
 
+const ADMIN_DOCUMENT_STATUSES = ["Received", "Filed", "Needs update", "Assigned", "Archived"];
+const ADMIN_DOCUMENT_CATEGORIES = ["General", "Tax", "Credit", "Bookkeeping", "Life Insurance", "Business Funding", "Financial Coaching"];
+const UPLOAD_CATEGORIES = Object.keys(CATEGORY_TO_FOLDER);
+
 function AdminDocuments() {
 const [docRows, setDocRows] = useState<any[]>([]);
 const [loading, setLoading] = useState(true);
+const [allClients, setAllClients] = useState<{ id: string; name: string }[]>([]);
+const [allServices, setAllServices] = useState<{ id: string; slug: string; name: string }[]>([]);
+
+const [uploading, setUploading] = useState(false);
+const [uploadError, setUploadError] = useState("");
+const [uploadNotice, setUploadNotice] = useState("");
+
+const [filterClient, setFilterClient] = useState("All");
+const [filterService, setFilterService] = useState("All");
+const [filterCategory, setFilterCategory] = useState("All");
+const [filterStatus, setFilterStatus] = useState("All");
+const [filterDateFrom, setFilterDateFrom] = useState("");
+
+const [editingId, setEditingId] = useState<string | null>(null);
+const [editName, setEditName] = useState("");
+const [notesDraft, setNotesDraft] = useState<Record<string, string>>({});
+const [busyId, setBusyId] = useState<string | null>(null);
 
 async function loadDocuments() {
 const supabase = supabaseBrowser();
 if (!supabase) { setLoading(false); return; }
 const result = await supabase
 .from("documents")
-.select("id, name, storage_path, category, status, created_at, clients(profiles(full_name))")
+.select("id, name, storage_path, category, status, folder, internal_notes, visible_to_client, service_slug, created_at, client_id, clients(profiles(full_name))")
 .order("created_at", { ascending: false });
 if (!result.error) {
 setDocRows(result.data || []);
@@ -1516,40 +1541,346 @@ setDocRows(result.data || []);
 setLoading(false);
 }
 
-useEffect(() => { loadDocuments(); }, []);
-
-async function viewDocument(storagePath: string) {
+async function loadFilters() {
 const supabase = supabaseBrowser();
 if (!supabase) return;
+const [clientsResult, servicesResult] = await Promise.all([
+supabase.from("clients").select("id, profiles(full_name)"),
+supabase.from("services").select("id, slug, name")
+]);
+setAllClients((clientsResult.data || []).map((row: any) => ({ id: row.id, name: row.profiles?.full_name || "Unknown client" })));
+setAllServices(servicesResult.data || []);
+}
+
+useEffect(() => {
+loadDocuments();
+loadFilters();
+}, []);
+
+async function uploadDocument(event: React.FormEvent<HTMLFormElement>) {
+event.preventDefault();
+setUploadError("");
+setUploadNotice("");
+const form = event.currentTarget;
+const formData = new FormData(form);
+const clientId = String(formData.get("clientId") || "");
+const name = String(formData.get("name") || "");
+const category = String(formData.get("category") || UPLOAD_CATEGORIES[0]);
+const serviceSlug = String(formData.get("serviceSlug") || "");
+const internalNotes = String(formData.get("internalNotes") || "");
+const visibleToClient = formData.get("visibleToClient") === "on";
+const notifyClient = formData.get("notifyClient") === "on";
+const file = formData.get("file") as File | null;
+
+if (!clientId || !name || !file?.name) {
+setUploadError("Please choose a client, document name, and file.");
+return;
+}
+
+const supabase = supabaseBrowser();
+if (!supabase) {
+setUploadError("Document upload is currently unavailable.");
+return;
+}
+
+setUploading(true);
+
+const folder = CATEGORY_TO_FOLDER[category] || "Resources";
+const documentCategory = serviceSlug ? (SERVICE_SLUG_TO_DOCUMENT_CATEGORY[serviceSlug] || "General") : "General";
+const path = clientId + "/" + folder + "/" + Date.now() + "-" + file.name;
+
+const uploadResult = await supabase.storage.from("CLIENT DOCUMENTS").upload(path, file);
+if (uploadResult.error) {
+setUploadError(uploadResult.error.message);
+setUploading(false);
+return;
+}
+
+const userResult = await supabase.auth.getUser();
+const adminUserId = userResult.data.user?.id || null;
+
+const insertResult = await supabase.from("documents").insert({
+client_id: clientId,
+uploaded_by: adminUserId,
+name,
+storage_path: path,
+category: documentCategory,
+status: "Filed",
+folder,
+visible_to_client: visibleToClient,
+internal_notes: internalNotes || null,
+service_slug: serviceSlug || null
+});
+
+if (insertResult.error) {
+setUploadError(insertResult.error.message);
+setUploading(false);
+return;
+}
+
+if (notifyClient) {
+await supabase.from("notifications").insert({
+client_id: clientId,
+title: "New document uploaded",
+body: name + " has been added to your document vault.",
+kind: "new_document"
+});
+await supabase.from("client_timeline").insert({
+client_id: clientId,
+event_type: "document_uploaded",
+title: "Document uploaded: " + name,
+description: name + " was added to the document vault by Tia.",
+metadata: { document_name: name }
+});
+}
+
+form.reset();
+setUploading(false);
+setUploadNotice(notifyClient ? "Document uploaded and client notified." : "Document uploaded.");
+await loadDocuments();
+}
+
+async function viewDocument(storagePath: string) {
+if (!storagePath) return;
+const newTab = window.open("", "_blank");
+const supabase = supabaseBrowser();
+if (!supabase) { newTab?.close(); return; }
 const result = await supabase.storage.from("CLIENT DOCUMENTS").createSignedUrl(storagePath, 60);
-if (result.data?.signedUrl) {
-window.open(result.data.signedUrl, "_blank");
+if (result.data?.signedUrl && newTab) {
+newTab.location.href = result.data.signedUrl;
+} else {
+setUploadError("Unable to open this file. It may no longer exist in storage.");
+newTab?.close();
 }
 }
+
+function startRename(doc: any) {
+setEditingId(doc.id);
+setEditName(doc.name);
+}
+
+async function saveRename(doc: any) {
+const supabase = supabaseBrowser();
+if (!supabase) return;
+await supabase.from("documents").update({ name: editName }).eq("id", doc.id);
+setEditingId(null);
+await loadDocuments();
+}
+
+async function moveFolder(doc: any, folder: string) {
+const supabase = supabaseBrowser();
+if (!supabase) return;
+setBusyId(doc.id);
+await supabase.from("documents").update({ folder }).eq("id", doc.id);
+await loadDocuments();
+setBusyId(null);
+}
+
+async function saveNotes(doc: any) {
+const supabase = supabaseBrowser();
+if (!supabase) return;
+const notes = notesDraft[doc.id];
+if (notes === undefined) return;
+setBusyId(doc.id);
+await supabase.from("documents").update({ internal_notes: notes || null }).eq("id", doc.id);
+setBusyId(null);
+await loadDocuments();
+}
+
+async function archiveDocument(doc: any) {
+const supabase = supabaseBrowser();
+if (!supabase) return;
+setBusyId(doc.id);
+await supabase.from("documents").update({ status: doc.status === "Archived" ? "Filed" : "Archived" }).eq("id", doc.id);
+await loadDocuments();
+setBusyId(null);
+}
+
+async function deleteDocument(doc: any) {
+if (!window.confirm("Permanently delete \"" + doc.name + "\"? This cannot be undone.")) return;
+const supabase = supabaseBrowser();
+if (!supabase) return;
+setBusyId(doc.id);
+if (doc.storage_path) {
+await supabase.storage.from("CLIENT DOCUMENTS").remove([doc.storage_path]);
+}
+await supabase.from("documents").delete().eq("id", doc.id);
+await loadDocuments();
+setBusyId(null);
+}
+
+const filteredDocs = docRows.filter((doc: any) => {
+const clientMatch = filterClient === "All" || doc.client_id === filterClient;
+const serviceMatch =
+filterService === "All" ||
+(filterService === "General" && !doc.service_slug) ||
+doc.service_slug === filterService;
+const categoryMatch = filterCategory === "All" || doc.category === filterCategory;
+const statusMatch = filterStatus === "All" || doc.status === filterStatus;
+const dateMatch = !filterDateFrom || new Date(doc.created_at) >= new Date(filterDateFrom);
+return clientMatch && serviceMatch && categoryMatch && statusMatch && dateMatch;
+});
 
 return (
 <>
-<PageHeader eyebrow="Admin" title="Uploaded documents" description="Review client uploads by service category and status." />
-<section className="soft-panel p-5">
+<PageHeader
+eyebrow="Admin"
+title="Document management"
+description="Upload documents directly into a client's vault, then file, rename, move, archive, or delete as needed."
+/>
+<section className="grid gap-5 xl:grid-cols-[24rem_1fr]">
+<form onSubmit={uploadDocument} className="soft-panel grid content-start gap-3 p-5">
+<h2 className="text-xl font-black text-legacy-ink">Upload document</h2>
+<select name="clientId" className="rounded-lg border border-legacy-silver px-3 py-3" defaultValue="">
+<option value="" disabled>Choose a client…</option>
+{allClients.map((client) => (
+<option key={client.id} value={client.id}>{client.name}</option>
+))}
+</select>
+<input name="name" className="rounded-lg border border-legacy-silver px-3 py-3" placeholder="Document name" required />
+<select name="category" className="rounded-lg border border-legacy-silver px-3 py-3" defaultValue={UPLOAD_CATEGORIES[0]}>
+{UPLOAD_CATEGORIES.map((category) => (
+<option key={category}>{category}</option>
+))}
+</select>
+<select name="serviceSlug" className="rounded-lg border border-legacy-silver px-3 py-3" defaultValue="">
+<option value="">General (no specific service)</option>
+{allServices.map((service) => (
+<option key={service.id} value={service.slug}>{service.name}</option>
+))}
+</select>
+<label className="grid gap-3 rounded-2xl border border-dashed border-legacy-purple bg-legacy-lavender/60 p-5 text-center font-bold text-legacy-plum">
+<Upload className="mx-auto" size={28} />
+Select a file
+<input name="file" type="file" className="sr-only" required />
+</label>
+<textarea name="internalNotes" className="rounded-lg border border-legacy-silver px-3 py-3" rows={3} placeholder="Internal notes (not visible to client)" />
+<label className="flex items-center gap-2 text-sm font-bold text-legacy-ink">
+<input name="visibleToClient" type="checkbox" defaultChecked className="h-4 w-4" />
+Visible to client
+</label>
+<label className="flex items-center gap-2 text-sm font-bold text-legacy-ink">
+<input name="notifyClient" type="checkbox" className="h-4 w-4" />
+Notify client (portal notification)
+</label>
+<button disabled={uploading} className="rounded-lg bg-legacy-purple px-5 py-3 font-black text-white disabled:opacity-50">
+{uploading ? "Uploading..." : "Upload document"}
+</button>
+{uploadError ? <p className="rounded-lg bg-legacy-lavender p-3 text-sm text-legacy-plum">{uploadError}</p> : null}
+{uploadNotice ? <p className="rounded-lg border border-legacy-silver bg-white p-3 text-sm text-legacy-green">{uploadNotice}</p> : null}
+</form>
+
+<div className="soft-panel p-5">
+<div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+<h2 className="text-xl font-black text-legacy-ink">All documents</h2>
+<div className="flex flex-wrap gap-2">
+<select value={filterClient} onChange={(e) => setFilterClient(e.target.value)} className="rounded-lg border border-legacy-silver px-3 py-2 text-sm">
+<option value="All">All clients</option>
+{allClients.map((client) => (
+<option key={client.id} value={client.id}>{client.name}</option>
+))}
+</select>
+<select value={filterService} onChange={(e) => setFilterService(e.target.value)} className="rounded-lg border border-legacy-silver px-3 py-2 text-sm">
+<option value="All">All services</option>
+<option value="General">General</option>
+{allServices.map((service) => (
+<option key={service.id} value={service.slug}>{service.name}</option>
+))}
+</select>
+<select value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)} className="rounded-lg border border-legacy-silver px-3 py-2 text-sm">
+<option value="All">All categories</option>
+{ADMIN_DOCUMENT_CATEGORIES.map((category) => (
+<option key={category}>{category}</option>
+))}
+</select>
+<select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="rounded-lg border border-legacy-silver px-3 py-2 text-sm">
+<option value="All">All statuses</option>
+{ADMIN_DOCUMENT_STATUSES.map((status) => (
+<option key={status}>{status}</option>
+))}
+</select>
+<input type="date" value={filterDateFrom} onChange={(e) => setFilterDateFrom(e.target.value)} className="rounded-lg border border-legacy-silver px-3 py-2 text-sm" />
+</div>
+</div>
+
 <div className="grid gap-3">
 {loading && <p className="text-sm text-legacy-muted">Loading documents...</p>}
-{!loading && docRows.length === 0 && (
-<p className="text-sm text-legacy-muted">No documents uploaded yet.</p>
+{!loading && filteredDocs.length === 0 && (
+<p className="text-sm text-legacy-muted">No documents match these filters yet.</p>
 )}
-{docRows.map((document: any) => (
-<div key={document.id} className="flex flex-col justify-between gap-3 rounded-xl border border-legacy-silver p-4 sm:flex-row sm:items-center">
-<div>
-<p className="font-black text-legacy-ink">{document.name}</p>
-<p className="text-sm text-legacy-muted">
-{document.clients?.profiles?.full_name || "Unknown client"} • {document.category} • Uploaded {new Date(document.created_at).toLocaleDateString()}
-</p>
+{filteredDocs.map((doc: any) => (
+<div key={doc.id} className="rounded-xl border border-legacy-silver p-4">
+<div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-start">
+<div className="min-w-0 flex-1">
+{editingId === doc.id ? (
+<div className="flex flex-wrap items-center gap-2">
+<input
+value={editName}
+onChange={(e) => setEditName(e.target.value)}
+className="rounded-lg border border-legacy-silver px-3 py-2 text-sm"
+/>
+<button onClick={() => saveRename(doc)} className="rounded-lg bg-legacy-purple px-3 py-2 text-sm font-bold text-white">Save</button>
+<button onClick={() => setEditingId(null)} className="rounded-lg border border-legacy-silver px-3 py-2 text-sm font-bold text-legacy-ink">Cancel</button>
 </div>
-<div className="flex gap-2">
-<StatusPill>{document.status}</StatusPill>
-<button onClick={() => viewDocument(document.storage_path)} className="rounded-lg border border-legacy-silver px-3 py-2 text-sm font-bold text-legacy-plum">View</button>
+) : (
+<p className="font-black text-legacy-ink">{doc.name}</p>
+)}
+<p className="mt-1 text-sm text-legacy-muted">
+{doc.clients?.profiles?.full_name || "Unknown client"} • {doc.category} • Uploaded {new Date(doc.created_at).toLocaleDateString()} •{" "}
+<span className={doc.status === "Archived" ? "text-legacy-plum" : "text-legacy-green"}>{doc.status}</span>
+</p>
+<div className="mt-3 flex flex-wrap items-center gap-2">
+<select
+value={doc.folder || "Resources"}
+onChange={(e) => moveFolder(doc, e.target.value)}
+disabled={busyId === doc.id}
+className="rounded-lg border border-legacy-silver px-2 py-2 text-sm"
+>
+{VAULT_FOLDERS.map((folder) => (
+<option key={folder} value={folder}>{folder}</option>
+))}
+</select>
+<span className="text-xs font-bold text-legacy-muted">
+{doc.visible_to_client ? "Visible to client" : "Hidden from client"}
+</span>
+</div>
+<div className="mt-3">
+<textarea
+value={notesDraft[doc.id] !== undefined ? notesDraft[doc.id] : (doc.internal_notes || "")}
+onChange={(e) => setNotesDraft((prev) => ({ ...prev, [doc.id]: e.target.value }))}
+onBlur={() => saveNotes(doc)}
+rows={2}
+placeholder="Internal notes (not visible to client)"
+className="w-full rounded-lg border border-legacy-silver px-3 py-2 text-sm"
+/>
+</div>
+</div>
+<div className="flex shrink-0 flex-wrap gap-2">
+{doc.storage_path ? (
+<button onClick={() => viewDocument(doc.storage_path)} className="rounded-lg border border-legacy-silver px-3 py-2 text-sm font-bold text-legacy-ink">View</button>
+) : null}
+{editingId !== doc.id ? (
+<button onClick={() => startRename(doc)} className="rounded-lg border border-legacy-silver px-3 py-2 text-sm font-bold text-legacy-ink">Rename</button>
+) : null}
+<button
+onClick={() => archiveDocument(doc)}
+disabled={busyId === doc.id}
+className="rounded-lg border border-legacy-silver px-3 py-2 text-sm font-bold text-legacy-ink disabled:opacity-50"
+>
+{doc.status === "Archived" ? "Restore" : "Archive"}
+</button>
+<button
+onClick={() => deleteDocument(doc)}
+disabled={busyId === doc.id}
+className="inline-flex items-center gap-1 rounded-lg border border-legacy-silver px-3 py-2 text-sm font-bold text-legacy-plum disabled:opacity-50"
+>
+<Trash2 size={14} /> Delete
+</button>
+</div>
 </div>
 </div>
 ))}
+</div>
 </div>
 </section>
 </>
