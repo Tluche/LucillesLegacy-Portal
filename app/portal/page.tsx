@@ -33,6 +33,7 @@ serviceTrackers
 import type { DocumentCategory, UserRole, ServiceTracker } from "@/lib/types";
 import { ClientBilling } from "@/components/billing-client";
 import { AdminBillingPanel } from "@/components/billing-admin";
+import { AdminMasterDocuments } from "@/components/admin-master-documents";
 
 const categories: DocumentCategory[] = ["Tax", "Credit", "Bookkeeping", "Life Insurance", "General"];
 
@@ -153,6 +154,7 @@ return (
 {active === "admin" && <AdminHome />}
 {active === "admin-leads" && <AdminLeads />}
 {active === "admin-clients" && <AdminClients />}
+{active === "admin-master-docs" && <AdminMasterDocuments />}
 {active === "admin-documents" && <AdminDocuments />}
 {active === "admin-resources" && <AdminResources />}
 {active === "admin-messages" && <AdminMessages />}
