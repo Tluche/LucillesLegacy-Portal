@@ -138,7 +138,7 @@ return (
 
 {role === "client" ? (
 <>
-{active === "dashboard" && <Dashboard displayName={displayName} displayServices={displayServices} displayNotifications={displayNotifications} displayAppointments={displayAppointments} />}
+{active === "dashboard" && <Dashboard displayName={displayName} displayServices={displayServices} displayNotifications={displayNotifications} displayAppointments={displayAppointments} onUploadClick={() => setActive("documents")} />}
 {active === "messages" && (
 <Messages messageText={messageText} setMessageText={setMessageText} visibleMessages={visibleMessages} />
 )}
@@ -169,12 +169,14 @@ function Dashboard({
 displayName,
 displayServices,
 displayNotifications,
-displayAppointments
+displayAppointments,
+onUploadClick
 }: {
 displayName: string;
 displayServices: ServiceTracker[];
 displayNotifications: { id: string; title: string; text: string }[];
 displayAppointments: { id: string; title: string; date: string; time: string; status: string }[];
+onUploadClick: () => void;
 }) {
 const upcomingAppointment = displayAppointments.find((appointment) => appointment.status === "Upcoming");
 const nextStepService = displayServices.find((service) => service.nextStep);
@@ -185,7 +187,7 @@ return (
 eyebrow="Dashboard"
 title={`Welcome, ${displayName.split(" ")[0]}`}
 description="Here is what is happening with your services, what we need from you, and what happens next."
-action={<button className="rounded-lg bg-legacy-purple px-5 py-3 font-black text-white">Upload document</button>}
+action={<button onClick={onUploadClick} className="rounded-lg bg-legacy-purple px-5 py-3 font-black text-white">Upload document</button>}
 />
 <div className="grid gap-4 md:grid-cols-3">
 <StatCard label="Current services" value={String(displayServices.length)} note="Tax, credit, bookkeeping, and life insurance support." icon={ClipboardList} />
@@ -352,13 +354,24 @@ required
 );
 }
 
+const VAULT_FOLDERS = [
+  "Agreements",
+  "Welcome Packet",
+  "Service Guides",
+  "Checklists",
+  "Uploaded by Client",
+  "Uploaded by Tia",
+  "Completed Work",
+  "Billing",
+  "Resources"
+];
+
 function Documents({ clientId }: { clientId: string | null }) {
 const [docList, setDocList] = useState<any[]>([]);
-const [selectedCategory, setSelectedCategory] = useState<DocumentCategory>("Tax");
 const [loading, setLoading] = useState(true);
 const [uploading, setUploading] = useState(false);
 const [error, setError] = useState("");
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
 async function loadDocuments() {
 const supabase = supabaseBrowser();
@@ -368,7 +381,7 @@ return;
 }
 const result = await supabase
 .from("documents")
-.select("id, name, storage_path, category, status, created_at")
+.select("id, name, storage_path, category, status, folder, created_at")
 .eq("client_id", clientId)
 .order("created_at", { ascending: false });
 if (!result.error) {
@@ -389,11 +402,11 @@ const formData = new FormData(form);
 const file = formData.get("file") as File | null;
 
 if (!file?.name) {
-  setError("Please choose a file before uploading.");
-  return;
+setError("Please choose a file before uploading.");
+return;
 }
-  if (!clientId) return;
-  
+if (!clientId) return;
+
 const supabase = supabaseBrowser();
 if (!supabase) {
 setError("Document upload is currently unavailable.");
@@ -403,7 +416,7 @@ return;
 setUploading(true);
 const userResult = await supabase.auth.getUser();
 const userId = userResult.data.user?.id;
-const path = `${clientId}/${selectedCategory}/${Date.now()}-${file.name}`;
+const path = `${clientId}/Uploaded by Client/${Date.now()}-${file.name}`;
 
 const uploadResult = await supabase.storage.from("CLIENT DOCUMENTS").upload(path, file);
 if (uploadResult.error) {
@@ -417,7 +430,9 @@ client_id: clientId,
 uploaded_by: userId,
 name: file.name,
 storage_path: path,
-category: selectedCategory,
+category: "General",
+folder: "Uploaded by Client",
+visible_to_client: true,
 status: "Received"
 });
 
@@ -428,6 +443,7 @@ return;
 }
 
 form.reset();
+setSelectedFile(null);
 await loadDocuments();
 }
 
@@ -452,28 +468,22 @@ return (
 <>
 <PageHeader
 eyebrow="Documents"
-title="Upload documents"
-description="Choose a category before uploading so your files go to the right service folder."
+title="Document vault"
+description="View documents shared with you and upload anything Tia has requested. Your files are only visible to you and Tia."
 />
 <section className="grid gap-5 lg:grid-cols-[24rem_1fr]">
 <form onSubmit={addDocument} className="soft-panel grid content-start gap-4 p-5">
-<h2 className="text-xl font-black text-legacy-ink">New upload</h2>
-<label className="grid gap-2 font-bold text-legacy-ink">
-Category
-<select
-value={selectedCategory}
-onChange={(event) => setSelectedCategory(event.target.value as DocumentCategory)}
-className="rounded-lg border border-legacy-silver px-3 py-3"
->
-{categories.map((category) => (
-<option key={category}>{category}</option>
-))}
-</select>
-</label>
+<h2 className="text-xl font-black text-legacy-ink">Upload a document</h2>
 <label className="grid gap-3 rounded-2xl border border-dashed border-legacy-purple bg-legacy-lavender/60 p-5 text-center font-bold text-legacy-plum">
 <Upload className="mx-auto" size={28} />
-  {selectedFile ? selectedFile.name : "Select a file"}
-<input name="file" type="file" className="sr-only" required onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)} />
+{selectedFile ? selectedFile.name : "Select a file"}
+<input
+name="file"
+type="file"
+className="sr-only"
+required
+onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)}
+/>
 </label>
 <button disabled={uploading} className="rounded-lg bg-legacy-purple px-5 py-3 font-black text-white disabled:opacity-50">
 {uploading ? "Uploading..." : "Upload document"}
@@ -481,55 +491,50 @@ className="rounded-lg border border-legacy-silver px-3 py-3"
 {error ? <p className="rounded-lg bg-legacy-lavender p-3 text-sm text-legacy-plum">{error}</p> : null}
 </form>
 
-<div className="soft-panel p-5">
-<h2 className="text-xl font-black text-legacy-ink">Your documents</h2>
-<div className="mt-4 overflow-x-auto">
-<table className="w-full min-w-[44rem] text-left">
-<thead className="text-sm text-legacy-muted">
-<tr>
-<th className="py-3">Document</th>
-<th>Category</th>
-<th>Uploaded</th>
-<th>Status</th>
-<th className="text-right">Action</th>
-</tr>
-</thead>
-<tbody className="divide-y divide-legacy-silver">
-{loading && (
-<tr><td className="py-4 text-sm text-legacy-muted" colSpan={5}>Loading documents...</td></tr>
-)}
-{!loading && docList.length === 0 && (
-<tr><td className="py-4 text-sm text-legacy-muted" colSpan={5}>No documents uploaded yet.</td></tr>
-)}
-{docList.map((document) => (
-<tr key={document.id}>
-<td className="py-4 font-bold text-legacy-ink">{document.name}</td>
-<td>{document.category}</td>
-<td>{new Date(document.created_at).toLocaleDateString()}</td>
-<td>
+<div className="grid gap-5">
+{loading && <p className="text-sm text-legacy-muted">Loading your document vault...</p>}
+{!loading &&
+VAULT_FOLDERS.map((folder) => {
+const folderDocs = docList.filter((document) => (document.folder || "Uploaded by Client") === folder);
+return (
+<div key={folder} className="soft-panel p-5">
+<h2 className="text-lg font-black text-legacy-ink">{folder}</h2>
+<div className="mt-3 grid gap-3">
+{folderDocs.length === 0 && <p className="text-sm text-legacy-muted">No documents yet.</p>}
+{folderDocs.map((document) => (
+<div
+key={document.id}
+className="flex flex-col justify-between gap-2 rounded-xl border border-legacy-silver p-4 sm:flex-row sm:items-center"
+>
+<div>
+<p className="font-black text-legacy-ink">{document.name}</p>
+<p className="text-sm text-legacy-muted">
+Added {new Date(document.created_at).toLocaleDateString()} •{" "}
 <StatusPill tone={document.status === "Needs update" ? "amber" : "green"}>{document.status}</StatusPill>
-</td>
-<td className="text-right">
-<div className="flex justify-end gap-2">
+</p>
+</div>
+<div className="flex gap-2">
 <button
 onClick={() => viewDocument(document.storage_path)}
-className="inline-flex items-center gap-2 rounded-lg border border-legacy-silver px-3 py-2 text-sm font-bold text-legacy-plum"
+className="rounded-lg border border-legacy-silver px-3 py-2 text-sm font-bold text-legacy-ink"
 >
 View
 </button>
+{folder === "Uploaded by Client" ? (
 <button
 onClick={() => deleteDocument(document.id, document.storage_path)}
-className="inline-flex items-center gap-2 rounded-lg border border-legacy-silver px-3 py-2 text-sm font-bold text-legacy-muted"
+className="rounded-lg border border-legacy-silver px-3 py-2 text-sm font-bold text-legacy-plum"
 >
-<Trash2 size={16} /> Delete
+Remove
 </button>
+) : null}
 </div>
-</td>
-</tr>
+</div>
 ))}
-</tbody>
-</table>
 </div>
+</div>
+);
+})}
 </div>
 </section>
 </>
