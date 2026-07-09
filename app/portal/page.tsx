@@ -139,6 +139,7 @@ return (
 {role === "client" ? (
 <>
 {active === "dashboard" && <Dashboard displayName={displayName} displayServices={displayServices} displayNotifications={displayNotifications} displayAppointments={displayAppointments} onUploadClick={() => setActive("documents")} />}
+{active === "notifications" && <Notifications clientId={realClientId} />}
 {active === "messages" && (
 <Messages messageText={messageText} setMessageText={setMessageText} visibleMessages={visibleMessages} />
 )}
@@ -354,6 +355,80 @@ required
 );
 }
 
+function Notifications({ clientId }: { clientId: string | null }) {
+const [notificationRows, setNotificationRows] = useState<any[]>([]);
+const [loading, setLoading] = useState(true);
+const [busyId, setBusyId] = useState<string | null>(null);
+
+async function loadNotifications() {
+const supabase = supabaseBrowser();
+if (!supabase || !clientId) { setLoading(false); return; }
+const result = await supabase
+.from("notifications")
+.select("id, title, body, kind, read_at, created_at")
+.eq("client_id", clientId)
+.order("created_at", { ascending: false });
+if (!result.error) setNotificationRows(result.data || []);
+setLoading(false);
+}
+
+useEffect(() => {
+loadNotifications();
+}, [clientId]);
+
+async function markRead(id: string) {
+const supabase = supabaseBrowser();
+if (!supabase) return;
+setBusyId(id);
+await supabase.from("notifications").update({ read_at: new Date().toISOString() }).eq("id", id);
+await loadNotifications();
+setBusyId(null);
+}
+
+async function markAllRead() {
+const supabase = supabaseBrowser();
+if (!supabase || !clientId) return;
+await supabase.from("notifications").update({ read_at: new Date().toISOString() }).eq("client_id", clientId).is("read_at", null);
+await loadNotifications();
+}
+
+const unreadCount = notificationRows.filter((n) => !n.read_at).length;
+
+return (
+<>
+<PageHeader
+eyebrow="Notifications"
+title="Notification center"
+description="Stay up to date on documents, invoices, services, and messages."
+action={unreadCount > 0 ? <button onClick={markAllRead} className="rounded-lg border border-legacy-silver px-5 py-3 font-black text-legacy-plum">Mark all as read</button> : undefined}
+/>
+<section className="soft-panel p-5">
+<div className="grid gap-3">
+{loading && <p className="text-sm text-legacy-muted">Loading notifications...</p>}
+{!loading && notificationRows.length === 0 && <p className="text-sm text-legacy-muted">No notifications yet.</p>}
+{notificationRows.map((note) => (
+<div key={note.id} className={"flex items-start justify-between gap-3 rounded-xl border p-4 " + (note.read_at ? "border-legacy-silver" : "border-legacy-purple bg-legacy-lavender/40")}>
+<div className="flex gap-3">
+<Bell size={18} className="mt-1 shrink-0 text-legacy-purple" />
+<div>
+<p className="font-black text-legacy-ink">{note.title}</p>
+<p className="mt-1 text-sm leading-6 text-legacy-muted">{note.body}</p>
+<p className="mt-2 text-xs font-bold text-legacy-muted">{new Date(note.created_at).toLocaleString()}</p>
+</div>
+</div>
+{!note.read_at ? (
+<button onClick={() => markRead(note.id)} disabled={busyId === note.id} className="shrink-0 rounded-lg border border-legacy-silver px-3 py-2 text-sm font-bold text-legacy-ink disabled:opacity-50">
+{busyId === note.id ? "..." : "Mark read"}
+</button>
+) : null}
+</div>
+))}
+</div>
+</section>
+</>
+);
+}
+
 const VAULT_FOLDERS = [
   "Agreements",
   "Welcome Packet",
@@ -441,6 +516,14 @@ if (insertResult.error) {
 setError(insertResult.error.message);
 return;
 }
+
+await supabase.from("client_timeline").insert({
+client_id: clientId,
+event_type: "document_uploaded",
+title: "Document uploaded: " + file.name,
+description: "You uploaded a document to your vault.",
+metadata: { document_name: file.name }
+});
 
 form.reset();
 setSelectedFile(null);
@@ -1328,6 +1411,9 @@ const [allServices, setAllServices] = useState<{ id: string; slug: string; name:
 const [selectedServiceByClient, setSelectedServiceByClient] = useState<Record<string, string>>({});
 const [assigningId, setAssigningId] = useState<string | null>(null);
 const [assignFeedback, setAssignFeedback] = useState<{ id: string; message: string } | null>(null);
+const [timelineClientId, setTimelineClientId] = useState<string | null>(null);
+const [timelineRows, setTimelineRows] = useState<any[]>([]);
+const [timelineLoading, setTimelineLoading] = useState(false);
 
 async function loadServices() {
 const supabase = supabaseBrowser();
@@ -1360,6 +1446,25 @@ if (result.error) {
   await loadClients();
 }
 setAssigningId(null);
+}
+
+async function openTimeline(clientId: string) {
+const supabase = supabaseBrowser();
+if (!supabase) return;
+setTimelineClientId(clientId);
+setTimelineLoading(true);
+const result = await supabase
+.from("client_timeline")
+.select("id, event_type, title, description, created_at")
+.eq("client_id", clientId)
+.order("created_at", { ascending: false });
+setTimelineRows(result.data || []);
+setTimelineLoading(false);
+}
+
+function closeTimeline() {
+setTimelineClientId(null);
+setTimelineRows([]);
 }
 
 async function loadClients() {
@@ -1437,6 +1542,7 @@ return (
 <td className="py-4">
 <p className="font-black text-legacy-ink">{client.name}</p>
 <p className="text-sm text-legacy-muted">{client.email}</p>
+<button onClick={() => openTimeline(client.id)} className="mt-1 text-xs font-bold text-legacy-purple underline">View timeline</button>
 </td>
 <td>{client.services}</td>
 <td><StatusPill>{client.status}</StatusPill></td>
@@ -1499,6 +1605,25 @@ className="rounded-lg border border-legacy-silver px-3 py-2 text-sm font-bold te
 <button className="rounded-lg bg-legacy-purple px-5 py-3 font-black text-white">Save client</button>
 </form>
 </div>
+{timelineClientId ? (
+<section className="soft-panel mt-5 p-5">
+<div className="mb-4 flex items-center justify-between">
+<h2 className="text-xl font-black text-legacy-ink">Client timeline</h2>
+<button onClick={closeTimeline} className="rounded-lg border border-legacy-silver px-3 py-2 text-sm font-bold text-legacy-ink">Close</button>
+</div>
+{timelineLoading && <p className="text-sm text-legacy-muted">Loading timeline...</p>}
+{!timelineLoading && timelineRows.length === 0 && <p className="text-sm text-legacy-muted">No activity recorded yet.</p>}
+<div className="grid gap-3">
+{timelineRows.map((row: any) => (
+<div key={row.id} className="rounded-xl border border-legacy-silver p-4">
+<p className="font-black text-legacy-ink">{row.title}</p>
+{row.description ? <p className="mt-1 text-sm text-legacy-muted">{row.description}</p> : null}
+<p className="mt-2 text-xs font-bold text-legacy-muted">{new Date(row.created_at).toLocaleString()}</p>
+</div>
+))}
+</div>
+</section>
+) : null}
 </>
 );
 }
@@ -1618,19 +1743,20 @@ setUploading(false);
 return;
 }
 
-if (notifyClient) {
-await supabase.from("notifications").insert({
-client_id: clientId,
-title: "New document uploaded",
-body: name + " has been added to your document vault.",
-kind: "new_document"
-});
 await supabase.from("client_timeline").insert({
 client_id: clientId,
 event_type: "document_uploaded",
 title: "Document uploaded: " + name,
 description: name + " was added to the document vault by Tia.",
 metadata: { document_name: name }
+});
+
+if (notifyClient) {
+await supabase.from("notifications").insert({
+client_id: clientId,
+title: "New document uploaded",
+body: name + " has been added to your document vault.",
+kind: "new_document"
 });
 }
 
