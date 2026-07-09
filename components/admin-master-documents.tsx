@@ -17,6 +17,26 @@ const MASTER_CATEGORIES = [
   "Completed Work Templates"
 ]
 
+const CATEGORY_TO_FOLDER: Record<string, string> = {
+  "General Onboarding": "Welcome Packet",
+  "Agreements": "Agreements",
+  "Welcome Packets": "Welcome Packet",
+  "Service Guides": "Service Guides",
+  "Checklists": "Checklists",
+  "Resources": "Resources",
+  "Billing": "Billing",
+  "Completed Work Templates": "Completed Work"
+}
+
+const SERVICE_SLUG_TO_DOCUMENT_CATEGORY: Record<string, string> = {
+  tax: "Tax",
+  credit: "Credit",
+  bookkeeping: "Bookkeeping",
+  "life-insurance": "Life Insurance",
+  "business-funding": "Business Funding",
+  "financial-coaching": "Financial Coaching"
+}
+
 type ServiceOption = { slug: string; name: string }
 
 type MasterDocument = {
@@ -37,8 +57,10 @@ export function AdminMasterDocuments() {
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState("")
+  const [notice, setNotice] = useState("")
   const [filterCategory, setFilterCategory] = useState("All")
   const [filterService, setFilterService] = useState("All")
+  const [filterStatus, setFilterStatus] = useState("All")
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editDraft, setEditDraft] = useState<{ name: string; category: string; service_slug: string; description: string }>({
     name: "",
@@ -54,12 +76,28 @@ export function AdminMasterDocuments() {
       return
     }
     setLoading(true)
-    const [docsResult, servicesResult] = await Promise.all([
-      supabase.from("master_documents").select("*").order("updated_at", { ascending: false }),
-      supabase.from("services").select("slug, name").order("name", { ascending: true })
-    ])
-    if (!docsResult.error) setDocs((docsResult.data || []) as MasterDocument[])
-    if (!servicesResult.error) setServices((servicesResult.data || []) as ServiceOption[])
+    setError("")
+
+    const docsResult = await supabase
+      .from("master_documents")
+      .select("*")
+      .order("updated_at", { ascending: false })
+    if (docsResult.error) {
+      setError(docsResult.error.message)
+    } else {
+      setDocs((docsResult.data || []) as MasterDocument[])
+    }
+
+    const servicesResult = await supabase
+      .from("services")
+      .select("slug, name")
+      .order("name", { ascending: true })
+    if (servicesResult.error) {
+      setError((prev) => prev || servicesResult.error.message)
+    } else {
+      setServices((servicesResult.data || []) as ServiceOption[])
+    }
+
     setLoading(false)
   }
 
@@ -67,9 +105,81 @@ export function AdminMasterDocuments() {
     loadData()
   }, [])
 
+  async function propagateToClients(masterDoc: {
+    id: string
+    name: string
+    category: string
+    service_slug: string | null
+    storage_path: string | null
+  }) {
+    const supabase = supabaseBrowser()
+    if (!supabase) return
+
+    const folder = CATEGORY_TO_FOLDER[masterDoc.category] || "Resources"
+    const documentCategory = masterDoc.service_slug
+      ? SERVICE_SLUG_TO_DOCUMENT_CATEGORY[masterDoc.service_slug] || "General"
+      : "General"
+
+    const userResult = await supabase.auth.getUser()
+    const adminUserId = userResult.data.user?.id
+    if (!adminUserId) return
+
+    let targetClientIds: string[] = []
+
+    if (!masterDoc.service_slug) {
+      const clientsResult = await supabase.from("clients").select("id").eq("status", "Active")
+      targetClientIds = (clientsResult.data || []).map((c: any) => c.id)
+    } else {
+      const serviceResult = await supabase
+        .from("services")
+        .select("id")
+        .eq("slug", masterDoc.service_slug)
+        .maybeSingle()
+      if (serviceResult.data?.id) {
+        const enrollResult = await supabase
+          .from("client_services")
+          .select("client_id")
+          .eq("service_id", serviceResult.data.id)
+        targetClientIds = Array.from(new Set((enrollResult.data || []).map((r: any) => r.client_id)))
+      }
+    }
+
+    if (targetClientIds.length === 0) return
+
+    for (const clientId of targetClientIds) {
+      let clientStoragePath = ""
+
+      if (masterDoc.storage_path) {
+        const downloadResult = await supabase.storage.from("MASTER DOCUMENTS").download(masterDoc.storage_path)
+        if (downloadResult.data) {
+          const fileName = masterDoc.storage_path.split("/").pop() || masterDoc.name
+          const path = `${clientId}/${folder}/${Date.now()}-${fileName}`
+          const uploadResult = await supabase.storage.from("CLIENT DOCUMENTS").upload(path, downloadResult.data)
+          if (!uploadResult.error) {
+            clientStoragePath = path
+          }
+        }
+      }
+
+      await supabase.from("documents").insert({
+        client_id: clientId,
+        uploaded_by: adminUserId,
+        name: masterDoc.name,
+        storage_path: clientStoragePath,
+        category: documentCategory,
+        status: "Assigned",
+        folder,
+        visible_to_client: true,
+        master_document_id: masterDoc.id,
+        service_slug: masterDoc.service_slug
+      })
+    }
+  }
+
   async function addDocument(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setError("")
+    setNotice("")
     const form = event.currentTarget
     const formData = new FormData(form)
     const file = formData.get("file") as File | null
@@ -100,23 +210,37 @@ export function AdminMasterDocuments() {
       storagePath = path
     }
 
-    const insertResult = await supabase.from("master_documents").insert({
-      name,
-      category,
-      service_slug: serviceSlug || null,
-      description: description || null,
-      storage_path: storagePath,
-      version: 1,
-      is_active: true
-    })
+    const insertResult = await supabase
+      .from("master_documents")
+      .insert({
+        name,
+        category,
+        service_slug: serviceSlug || null,
+        description: description || null,
+        storage_path: storagePath,
+        version: 1,
+        is_active: true
+      })
+      .select()
+      .single()
 
-    setUploading(false)
     if (insertResult.error) {
       setError(insertResult.error.message)
+      setUploading(false)
       return
     }
 
+    await propagateToClients({
+      id: insertResult.data.id,
+      name,
+      category,
+      service_slug: serviceSlug || null,
+      storage_path: storagePath
+    })
+
     form.reset()
+    setUploading(false)
+    setNotice("Document added and sent to the matching client vaults.")
     await loadData()
   }
 
@@ -148,11 +272,18 @@ export function AdminMasterDocuments() {
 
   async function viewDocument(storagePath: string | null) {
     if (!storagePath) return
+    const newTab = window.open("", "_blank")
     const supabase = supabaseBrowser()
-    if (!supabase) return
+    if (!supabase) {
+      newTab?.close()
+      return
+    }
     const result = await supabase.storage.from("MASTER DOCUMENTS").createSignedUrl(storagePath, 60)
-    if (result.data?.signedUrl) {
-      window.open(result.data.signedUrl, "_blank")
+    if (result.data?.signedUrl && newTab) {
+      newTab.location.href = result.data.signedUrl
+    } else {
+      setError("Unable to open this file. It may no longer exist in storage.")
+      newTab?.close()
     }
   }
 
@@ -189,7 +320,11 @@ export function AdminMasterDocuments() {
       filterService === "All" ||
       (filterService === "General" && !doc.service_slug) ||
       doc.service_slug === filterService
-    return categoryMatch && serviceMatch
+    const statusMatch =
+      filterStatus === "All" ||
+      (filterStatus === "Active" && doc.is_active) ||
+      (filterStatus === "Archived" && !doc.is_active)
+    return categoryMatch && serviceMatch && statusMatch
   })
 
   function serviceName(slug: string | null) {
@@ -202,11 +337,10 @@ export function AdminMasterDocuments() {
       <PageHeader
         eyebrow="Admin"
         title="Master document library"
-        description="Central library of business documents. Upload placeholders now; replace with final files during the next phase."
+        description="Central library of business documents. Upload placeholders now; replace with final files during the next phase. Documents automatically appear in the matching client vault folder."
       />
-      <section className="grid gap-5 xl:grid-cols-[24rem_1fr]">
-        <form onSubmit={addDocument} className="soft-panel grid content-start gap-4 p-5">
-          <h2 className="text-xl font-black text-legacy-ink">Add master document</h2>
+      <section className="grid gap-5">
+        <form onSubmit={addDocument} className="soft-panel grid gap-3 p-5 sm:grid-cols-2">
           <input name="name" className="rounded-lg border border-legacy-silver px-3 py-3" placeholder="Document name" required />
           <select name="category" className="rounded-lg border border-legacy-silver px-3 py-3" defaultValue={MASTER_CATEGORIES[0]}>
             {MASTER_CATEGORIES.map((category) => (
@@ -221,24 +355,27 @@ export function AdminMasterDocuments() {
               </option>
             ))}
           </select>
-          <textarea
-            name="description"
-            className="rounded-lg border border-legacy-silver px-3 py-3"
-            rows={3}
-            placeholder="Description (internal use)"
-          />
-          <label className="grid gap-3 rounded-2xl border border-dashed border-legacy-purple bg-legacy-lavender/60 p-5 text-center font-bold text-legacy-plum">
-            <Upload className="mx-auto" size={28} />
+          <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-dashed border-legacy-silver px-3 py-3 text-sm text-legacy-muted">
+            <Upload size={18} />
             Select a file (optional placeholder)
             <input name="file" type="file" className="sr-only" />
           </label>
+          <textarea
+            name="description"
+            className="rounded-lg border border-legacy-silver px-3 py-3 sm:col-span-2"
+            rows={3}
+            placeholder="Description (internal use)"
+          />
           <button
             disabled={uploading}
-            className="rounded-lg bg-legacy-purple px-5 py-3 font-black text-white disabled:opacity-50"
+            className="rounded-lg bg-legacy-purple px-5 py-3 font-black text-white disabled:opacity-50 sm:col-span-2"
           >
             {uploading ? "Uploading..." : "Add document"}
           </button>
-          {error ? <p className="rounded-lg bg-legacy-lavender p-3 text-sm text-legacy-plum">{error}</p> : null}
+          {error ? <p className="rounded-lg bg-legacy-lavender p-3 text-sm text-legacy-plum sm:col-span-2">{error}</p> : null}
+          {notice ? (
+            <p className="rounded-lg border border-legacy-silver bg-white p-3 text-sm text-legacy-green sm:col-span-2">{notice}</p>
+          ) : null}
         </form>
 
         <div className="soft-panel p-5">
@@ -267,6 +404,15 @@ export function AdminMasterDocuments() {
                     {service.name}
                   </option>
                 ))}
+              </select>
+              <select
+                value={filterStatus}
+                onChange={(event) => setFilterStatus(event.target.value)}
+                className="rounded-lg border border-legacy-silver px-3 py-2 text-sm"
+              >
+                <option>All</option>
+                <option>Active</option>
+                <option>Archived</option>
               </select>
               <button
                 onClick={loadData}
@@ -330,7 +476,7 @@ export function AdminMasterDocuments() {
                       </button>
                       <button
                         onClick={() => setEditingId(null)}
-                        className="rounded-lg border border-legacy-silver px-4 py-2 text-sm font-bold text-legacy-muted"
+                        className="rounded-lg border border-legacy-silver px-4 py-2 text-sm font-bold text-legacy-ink"
                       >
                         Cancel
                       </button>
@@ -368,7 +514,6 @@ export function AdminMasterDocuments() {
                           onChange={(event) => {
                             const file = event.target.files?.[0]
                             if (file) replaceFile(doc, file)
-                            event.target.value = ""
                           }}
                         />
                       </label>
