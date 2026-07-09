@@ -947,14 +947,131 @@ Confirm new password
 );
 }
 
+const CATEGORY_TO_FOLDER: Record<string, string> = {
+  "General Onboarding": "Welcome Packet",
+  "Agreements": "Agreements",
+  "Welcome Packets": "Welcome Packet",
+  "Service Guides": "Service Guides",
+  "Checklists": "Checklists",
+  "Resources": "Resources",
+  "Billing": "Billing",
+  "Completed Work Templates": "Completed Work"
+}
+
+const SERVICE_SLUG_TO_DOCUMENT_CATEGORY: Record<string, string> = {
+  tax: "Tax",
+  credit: "Credit",
+  bookkeeping: "Bookkeeping",
+  "life-insurance": "Life Insurance",
+  "business-funding": "Business Funding",
+  "financial-coaching": "Financial Coaching"
+}
+
+async function assignServiceToClient(
+  supabase: ReturnType<typeof supabaseBrowser>,
+  params: { clientId: string; serviceId: string; serviceSlug: string; serviceName: string; stages?: string[] }
+): Promise<{ error: string | null; alreadyAssigned?: boolean }> {
+  if (!supabase) return { error: "No connection available." }
+
+  const existing = await supabase
+    .from("client_services")
+    .select("id")
+    .eq("client_id", params.clientId)
+    .eq("service_id", params.serviceId)
+    .maybeSingle()
+
+  if (existing.data) {
+    return { error: null, alreadyAssigned: true }
+  }
+
+  const firstStage = (params.stages && params.stages[0]) || "Getting started"
+
+  const insertResult = await supabase.from("client_services").insert({
+    client_id: params.clientId,
+    service_id: params.serviceId,
+    current_stage: firstStage,
+    progress: 0,
+    admin_notes: null,
+    next_step: null,
+    last_updated: new Date().toISOString()
+  })
+
+  if (insertResult.error) {
+    return { error: insertResult.error.message }
+  }
+
+  const userResult = await supabase.auth.getUser()
+  const adminUserId = userResult.data.user?.id || null
+
+  const rulesResult = await supabase
+    .from("document_automation_rules")
+    .select("master_document_id, master_documents(name, category, service_slug, storage_path)")
+    .eq("trigger_event", "service_added")
+    .eq("service_slug", params.serviceSlug)
+
+  const rules: any[] = rulesResult.data || []
+  const documentCategory = SERVICE_SLUG_TO_DOCUMENT_CATEGORY[params.serviceSlug] || "General"
+
+  for (const rule of rules) {
+    const masterDoc = rule.master_documents
+    if (!masterDoc) continue
+    const folder = CATEGORY_TO_FOLDER[masterDoc.category] || "Resources"
+    let clientStoragePath = ""
+
+    if (masterDoc.storage_path) {
+      const downloadResult = await supabase.storage.from("MASTER DOCUMENTS").download(masterDoc.storage_path)
+      if (downloadResult.data) {
+        const fileName = masterDoc.storage_path.split("/").pop() || masterDoc.name
+        const path = `${params.clientId}/${folder}/${Date.now()}-${fileName}`
+        const uploadResult = await supabase.storage.from("CLIENT DOCUMENTS").upload(path, downloadResult.data)
+        if (!uploadResult.error) {
+          clientStoragePath = path
+        }
+      }
+    }
+
+    await supabase.from("documents").insert({
+      client_id: params.clientId,
+      uploaded_by: adminUserId,
+      name: masterDoc.name,
+      storage_path: clientStoragePath,
+      category: documentCategory,
+      status: "Assigned",
+      folder,
+      visible_to_client: true,
+      master_document_id: rule.master_document_id,
+      service_slug: params.serviceSlug
+    })
+  }
+
+  await supabase.from("client_timeline").insert({
+    client_id: params.clientId,
+    event_type: "service_added",
+    title: `Service added: ${params.serviceName}`,
+    description: `${params.serviceName} was added to this client's account.`,
+    metadata: { service_id: params.serviceId, service_slug: params.serviceSlug }
+  })
+
+  await supabase.from("notifications").insert({
+    client_id: params.clientId,
+    title: "New service added",
+    body: `${params.serviceName} has been added to your account. Check your dashboard for next steps.`,
+    kind: "service_added"
+  })
+
+  return { error: null, alreadyAssigned: false }
+}
+
 function AdminHome() {
 const [stats, setStats] = useState({ clients: 0, documents: 0, unread: 0, billingCents: 0 });
 const [attentionClients, setAttentionClients] = useState<
 { id: string; name: string; email: string; preferredContact: string; needsDocument: boolean }[]
 >([]);
 const [pendingRequests, setPendingRequests] = useState<
-{ id: string; clientName: string; serviceName: string; createdAt: string }[]
-  >([]);
+{ id: string; clientId: string; serviceId: string; serviceSlug: string; stages: string[]; clientName: string; serviceName: string; createdAt: string }[]
+  >([])
+  const [requestBusyId, setRequestBusyId] = useState<string | null>(null)
+  const [requestFeedback, setRequestFeedback] = useState<{ id: string; message: string } | null>(null);
   
 useEffect(() => {
 const supabase = supabaseBrowser();
@@ -997,7 +1114,7 @@ needsDocument: needsDocSet.has(row.id)
 
   const serviceRequestsResult = await supabase
   .from("service_requests")
-  .select("id, created_at, clients(profiles(full_name)), services(name)")
+  .select("id, created_at, client_id, service_id, clients(profiles(full_name)), services(id, slug, name, stages)")
   .eq("status", "pending")
   .order("created_at", { ascending: false });
 
@@ -1005,6 +1122,10 @@ needsDocument: needsDocSet.has(row.id)
   setPendingRequests(
     serviceRequestRows.map((row: any) => ({
       id: row.id,
+      clientId: row.client_id,
+      serviceId: row.service_id,
+      serviceSlug: row.services?.slug || "",
+      stages: row.services?.stages || [],
       clientName: row.clients?.profiles?.full_name || "Unknown client",
       serviceName: row.services?.name || "Unknown service",
       createdAt: row.created_at
@@ -1012,6 +1133,49 @@ needsDocument: needsDocSet.has(row.id)
     );
 })();
 }, []);
+
+  async function respondToRequest(
+    request: { id: string; clientId: string; serviceId: string; serviceSlug: string; stages: string[]; serviceName: string },
+    decision: "approved" | "declined"
+  ) {
+    const supabase = supabaseBrowser();
+    if (!supabase) return;
+    setRequestBusyId(request.id);
+    setRequestFeedback(null);
+
+    if (decision === "approved") {
+      const assignResult = await assignServiceToClient(supabase, {
+        clientId: request.clientId,
+        serviceId: request.serviceId,
+        serviceSlug: request.serviceSlug,
+        serviceName: request.serviceName,
+        stages: request.stages
+      });
+      if (assignResult.error) {
+        setRequestFeedback({ id: request.id, message: assignResult.error });
+        setRequestBusyId(null);
+        return;
+      }
+    }
+
+    const userResult = await supabase.auth.getUser();
+    const adminUserId = userResult.data.user?.id || null;
+
+    const updateResult = await supabase
+      .from("service_requests")
+      .update({ status: decision, reviewed_by: adminUserId, reviewed_at: new Date().toISOString() })
+      .eq("id", request.id);
+
+    if (updateResult.error) {
+      setRequestFeedback({ id: request.id, message: updateResult.error.message });
+      setRequestBusyId(null);
+      return;
+    }
+
+    setPendingRequests((prev) => prev.filter((item) => item.id !== request.id));
+    setRequestBusyId(null);
+  }
+
 
 return (
 <>
@@ -1055,8 +1219,26 @@ action={<button className="inline-flex items-center gap-2 rounded-lg bg-legacy-p
   <div>
   <p className="font-black text-legacy-ink">{request.clientName}</p>
   <p className="text-sm text-legacy-muted">Interested in: {request.serviceName}</p>
+  {requestFeedback && requestFeedback.id === request.id ? (
+    <p className="mt-1 text-xs text-red-600">{requestFeedback.message}</p>
+  ) : null}
   </div>
-  <StatusPill tone="purple">Pending</StatusPill>
+  <div className="flex items-center gap-2">
+    <button
+      onClick={() => respondToRequest(request, "approved")}
+      disabled={requestBusyId === request.id}
+      className="rounded-lg bg-legacy-purple px-3 py-2 text-sm font-bold text-white disabled:opacity-50"
+    >
+      {requestBusyId === request.id ? "Working..." : "Approve"}
+    </button>
+    <button
+      onClick={() => respondToRequest(request, "declined")}
+      disabled={requestBusyId === request.id}
+      className="rounded-lg border border-legacy-silver px-3 py-2 text-sm font-bold text-legacy-plum disabled:opacity-50"
+    >
+      Decline
+    </button>
+  </div>
   </div>
   ))}
   </div>
@@ -1134,10 +1316,47 @@ return (
 
 function AdminClients() {
 const [clientRows, setClientRows] = useState<
-{ id: string; name: string; email: string; services: string; status: string; nextStep: string }[]
+{ id: string; name: string; email: string; services: string; status: string; nextStep: string; assignedServiceIds: string[] }[]
 >([]);
 const [sendingId, setSendingId] = useState<string | null>(null);
 const [feedback, setFeedback] = useState<{ id: string; message: string } | null>(null);
+const [allServices, setAllServices] = useState<{ id: string; slug: string; name: string; stages: string[] }[]>([]);
+const [selectedServiceByClient, setSelectedServiceByClient] = useState<Record<string, string>>({});
+const [assigningId, setAssigningId] = useState<string | null>(null);
+const [assignFeedback, setAssignFeedback] = useState<{ id: string; message: string } | null>(null);
+
+async function loadServices() {
+const supabase = supabaseBrowser();
+if (!supabase) return;
+const result = await supabase.from("services").select("id, slug, name, stages");
+setAllServices(result.data || []);
+}
+
+async function assignService(clientId: string) {
+const serviceId = selectedServiceByClient[clientId];
+if (!serviceId) return;
+const service = allServices.find((s) => s.id === serviceId);
+if (!service) return;
+const supabase = supabaseBrowser();
+if (!supabase) return;
+setAssigningId(clientId);
+setAssignFeedback(null);
+const result = await assignServiceToClient(supabase, {
+  clientId,
+  serviceId: service.id,
+  serviceSlug: service.slug,
+  serviceName: service.name,
+  stages: service.stages
+});
+if (result.error) {
+  setAssignFeedback({ id: clientId, message: result.error });
+} else {
+  setAssignFeedback({ id: clientId, message: result.alreadyAssigned ? "Client already has this service." : "Service assigned." });
+  setSelectedServiceByClient((prev) => ({ ...prev, [clientId]: "" }));
+  await loadClients();
+}
+setAssigningId(null);
+}
 
 async function loadClients() {
 const supabase = supabaseBrowser();
@@ -1145,7 +1364,7 @@ if (!supabase) return;
 
 const clientsResult = await supabase
 .from("clients")
-.select("id, status, profiles(full_name, email), client_services(current_stage, next_step, services(name))");
+.select("id, status, profiles(full_name, email), client_services(service_id, current_stage, next_step, services(name))");
 const rows: any = clientsResult.data || [];
 
 setClientRows(
@@ -1153,13 +1372,15 @@ rows.map((row: any) => {
 const services = (row.client_services || []) as any[];
 const serviceNames = services.map((cs) => cs.services?.name).filter(Boolean).join(", ");
 const nextStep = services.find((cs) => cs.next_step)?.next_step;
+const assignedServiceIds = services.map((cs) => cs.service_id).filter(Boolean);
 return {
 id: row.id,
 name: row.profiles?.full_name || "Unknown client",
 email: row.profiles?.email || "",
 services: serviceNames || "No services assigned yet",
 status: row.status || "Active",
-nextStep: nextStep || "No pending next step."
+nextStep: nextStep || "No pending next step.",
+assignedServiceIds
 };
 })
 );
@@ -1167,6 +1388,7 @@ nextStep: nextStep || "No pending next step."
 
 useEffect(() => {
 loadClients();
+loadServices();
 }, []);
 
 async function sendAccessLink(clientId: string) {
@@ -1196,6 +1418,7 @@ return (
 <th>Assigned services</th>
 <th>Status</th>
 <th>Next step</th>
+<th>Add service</th>
 <th className="text-right">Access</th>
 </tr>
 </thead>
@@ -1214,6 +1437,32 @@ return (
 <td>{client.services}</td>
 <td><StatusPill>{client.status}</StatusPill></td>
 <td className="text-legacy-muted">{client.nextStep}</td>
+<td>
+<div className="flex flex-col gap-2">
+<select
+className="rounded-lg border border-legacy-silver px-2 py-2 text-sm"
+value={selectedServiceByClient[client.id] || ""}
+onChange={(e) => setSelectedServiceByClient((prev) => ({ ...prev, [client.id]: e.target.value }))}
+>
+<option value="">Choose a service…</option>
+{allServices
+.filter((service) => !client.assignedServiceIds.includes(service.id))
+.map((service) => (
+<option key={service.id} value={service.id}>{service.name}</option>
+))}
+</select>
+<button
+onClick={() => assignService(client.id)}
+disabled={assigningId === client.id || !selectedServiceByClient[client.id]}
+className="rounded-lg bg-legacy-purple px-3 py-2 text-sm font-bold text-white disabled:opacity-50"
+>
+{assigningId === client.id ? "Assigning..." : "Assign"}
+</button>
+{assignFeedback && assignFeedback.id === client.id ? (
+<p className="text-xs text-legacy-muted">{assignFeedback.message}</p>
+) : null}
+</div>
+</td>
 <td className="text-right">
 <button
 onClick={() => sendAccessLink(client.id)}
