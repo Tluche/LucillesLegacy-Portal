@@ -142,7 +142,7 @@ return (
 <Messages messageText={messageText} setMessageText={setMessageText} visibleMessages={visibleMessages} />
 )}
 {active === "documents" && <Documents clientId={realClientId} />}
-{active === "status" && <ServiceStatus />}
+  {active === "status" && <ServiceStatus clientId={realClientId} />}
 {active === "appointments" && <Appointments />}
 {active === "billing" && <ClientBilling clientId={realClientId} />}
 {active === "resources" && <Resources />}
@@ -534,55 +534,157 @@ className="inline-flex items-center gap-2 rounded-lg border border-legacy-silver
 );
 }
 
-function ServiceStatus() {
-return (
-<>
-<PageHeader
-eyebrow="Service Status"
-title="Your progress"
-description="Only services assigned to you appear here. Each tracker explains where things stand and what happens next."
-/>
-<div className="grid gap-5">
-{serviceTrackers.map((service) => (
-<article key={service.key} className="soft-panel p-5">
-<div className="flex flex-wrap items-start justify-between gap-4">
-<div>
-<h2 className="text-2xl font-black text-legacy-ink">{service.name}</h2>
-<p className="mt-1 text-legacy-muted">Last updated: {service.lastUpdated}</p>
-</div>
-<StatusPill>{service.currentStage}</StatusPill>
-</div>
-<div className="mt-5 h-3 overflow-hidden rounded-full bg-legacy-silver">
-<div className="h-full rounded-full bg-legacy-purple" style={{ width: `${service.progress}%` }} />
-</div>
-<div className="mt-5 grid gap-2 md:grid-cols-2 lg:grid-cols-4">
-{service.stages.map((stage) => {
-const reached = service.stages.indexOf(stage) <= service.stages.indexOf(service.currentStage);
-return (
-<div key={stage} className={`rounded-xl border p-3 ${reached ? "border-legacy-purple bg-legacy-lavender" : "border-legacy-silver bg-white"}`}>
-<CheckCircle2 size={18} className={reached ? "text-legacy-purple" : "text-legacy-muted"} />
-<p className="mt-2 text-sm font-bold text-legacy-ink">{stage}</p>
-</div>
-);
-})}
-</div>
-<div className="mt-5 grid gap-4 md:grid-cols-2">
-<div className="rounded-xl bg-[#fbfafe] p-4">
-<p className="font-black text-legacy-ink">Notes from admin</p>
-<p className="mt-2 leading-7 text-legacy-muted">{service.adminNotes}</p>
-</div>
-<div className="rounded-xl bg-legacy-lavender p-4">
-<p className="font-black text-legacy-ink">Next step</p>
-<p className="mt-2 leading-7 text-legacy-muted">{service.nextStep}</p>
-</div>
-</div>
-</article>
-))}
-</div>
-</>
-);
-}
+function ServiceStatus({ clientId }: { clientId: string | null }) {
+  const [enrolled, setEnrolled] = useState<any[]>([]);
+  const [available, setAvailable] = useState<any[]>([]);
+  const [requestedIds, setRequestedIds] = useState<string[]>([]);
+  const [loadingServices, setLoadingServices] = useState(true);
+  const [requesting, setRequesting] = useState<string | null>(null);
+  const [requestError, setRequestError] = useState("");
 
+  async function loadServices() {
+    const supabase = supabaseBrowser();
+    if (!supabase || !clientId) {
+      setLoadingServices(false);
+      return;
+    }
+
+    const [enrolledResult, allServicesResult, requestsResult] = await Promise.all([
+      supabase
+      .from("client_services")
+      .select("id, current_stage, progress, admin_notes, next_step, last_updated, services(id, slug, name, stages)")
+      .eq("client_id", clientId),
+      supabase.from("services").select("id, slug, name, stages"),
+      supabase.from("service_requests").select("service_id, status").eq("client_id", clientId)
+      ]);
+
+    const enrolledRows: any[] = enrolledResult.data || [];
+    const allServiceRows: any[] = allServicesResult.data || [];
+    const requestRows: any[] = requestsResult.data || [];
+
+    setEnrolled(enrolledRows);
+    setRequestedIds(requestRows.filter((row: any) => row.status === "pending").map((row: any) => row.service_id));
+
+    const enrolledServiceIds = enrolledRows.map((row: any) => row.services?.id);
+    setAvailable(allServiceRows.filter((service: any) => !enrolledServiceIds.includes(service.id)));
+
+    setLoadingServices(false);
+  }
+
+  useEffect(() => {
+    loadServices();
+  }, [clientId]);
+
+  async function requestService(serviceId: string) {
+    const supabase = supabaseBrowser();
+    if (!supabase || !clientId) return;
+
+    setRequesting(serviceId);
+    setRequestError("");
+
+    const insertResult = await supabase.from("service_requests").insert({
+      client_id: clientId,
+      service_id: serviceId,
+      status: "pending"
+    });
+
+    setRequesting(null);
+    if (insertResult.error) {
+      setRequestError(insertResult.error.message);
+      return;
+    }
+
+    await loadServices();
+  }
+
+  return (
+    <>
+    <PageHeader
+      eyebrow="Service Status"
+      title="Your progress"
+      description="Only services assigned to you appear here. Each tracker explains where things stand and what happens next."
+      />
+      {loadingServices && <p className="mt-4 text-sm text-legacy-muted">Loading your services...</p>}
+      {!loadingServices && enrolled.length === 0 && (
+      <p className="mt-4 text-sm text-legacy-muted">You're not enrolled in any services yet. Explore what's available below.</p>
+    )}
+    <div className="grid gap-5">
+      {enrolled.map((row) => {
+      const service = row.services;
+      const stages: string[] = service?.stages || [];
+      const currentIndex = stages.indexOf(row.current_stage);
+      return (
+        <article key={row.id} className="soft-panel p-5">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+        <h2 className="text-2xl font-black text-legacy-ink">{service?.name}</h2>
+        <p className="mt-1 text-legacy-muted">Last updated: {row.last_updated ? new Date(row.last_updated).toLocaleDateString() : "—"}</p>
+        </div>
+        <StatusPill>{row.current_stage}</StatusPill>
+        </div>
+        <div className="mt-5 h-3 overflow-hidden rounded-full bg-legacy-silver">
+        <div className="h-full rounded-full bg-legacy-purple" style={{ width: `${row.progress || 0}%` }} />
+        </div>
+        <div className="mt-5 grid gap-2 md:grid-cols-2 lg:grid-cols-4">
+          {stages.map((stage) => {
+          const reached = stages.indexOf(stage) <= currentIndex;
+          return (
+            <div key={stage} className={`rounded-xl border p-3 ${reached ? "border-legacy-purple bg-legacy-lavender" : "border-legacy-silver bg-white"}`}>
+            <CheckCircle2 size={18} className={reached ? "text-legacy-purple" : "text-legacy-muted"} />
+            <p className="mt-2 text-sm font-bold text-legacy-ink">{stage}</p>
+            </div>
+            );
+        })}
+        </div>
+        <div className="mt-5 grid gap-4 md:grid-cols-2">
+        <div className="rounded-xl bg-[#fbfafe] p-4">
+        <p className="font-black text-legacy-ink">Notes from admin</p>
+        <p className="mt-2 leading-7 text-legacy-muted">{row.admin_notes || "No notes yet."}</p>
+        </div>
+        <div className="rounded-xl bg-legacy-lavender p-4">
+        <p className="font-black text-legacy-ink">Next step</p>
+        <p className="mt-2 leading-7 text-legacy-muted">{row.next_step || "We'll update this soon."}</p>
+        </div>
+        </div>
+        </article>
+        );
+    })}
+    </div>
+    <section className="soft-panel mt-5 p-5">
+    <h2 className="text-xl font-black text-legacy-ink">Explore additional services</h2>
+    <p className="mt-1 text-sm text-legacy-muted">Interested in more support? Request a service below and we'll follow up with you.</p>
+      {requestError && <p className="mt-3 text-sm text-red-600">{requestError}</p>}
+    <div className="mt-4 grid gap-3">
+      {!loadingServices && available.length === 0 && (
+      <p className="text-sm text-legacy-muted">You're already enrolled in everything we currently offer.</p>
+    )}
+      {available.map((service) => {
+      const alreadyRequested = requestedIds.includes(service.id);
+      return (
+        <div key={service.id} className="flex flex-col justify-between gap-3 rounded-xl border border-legacy-silver p-4 sm:flex-row sm:items-center">
+        <div>
+        <p className="font-black text-legacy-ink">{service.name}</p>
+        <p className="text-sm text-legacy-muted">Starts with: {service.stages?.[0]}</p>
+        </div>
+          {alreadyRequested ? (
+          <StatusPill tone="purple">Requested — we'll be in touch</StatusPill>
+          ) : (
+          <button
+            onClick={() => requestService(service.id)}
+            disabled={requesting === service.id}
+            className="rounded-lg bg-legacy-purple px-5 py-3 font-black text-white disabled:opacity-50"
+            >
+            {requesting === service.id ? "Requesting..." : "Request this service"}
+          </button>
+        )}
+        </div>
+        );
+    })}
+    </div>
+    </section>
+    </>
+    );
+}
 function Appointments() {
 return (
 <>
@@ -843,7 +945,10 @@ const [stats, setStats] = useState({ clients: 0, documents: 0, unread: 0, billin
 const [attentionClients, setAttentionClients] = useState<
 { id: string; name: string; email: string; preferredContact: string; needsDocument: boolean }[]
 >([]);
-
+const [pendingRequests, setPendingRequests] = useState<
+{ id: string; clientName: string; serviceName: string; createdAt: string }[]
+  >([]);
+  
 useEffect(() => {
 const supabase = supabaseBrowser();
 if (!supabase) return;
@@ -882,6 +987,22 @@ preferredContact: row.profiles?.preferred_contact || "Email",
 needsDocument: needsDocSet.has(row.id)
 }))
 );
+
+  const serviceRequestsResult = await supabase
+  .from("service_requests")
+  .select("id, created_at, clients(profiles(full_name)), services(name)")
+  .eq("status", "pending")
+  .order("created_at", { ascending: false });
+
+  const serviceRequestRows: any = serviceRequestsResult.data || [];
+  setPendingRequests(
+    serviceRequestRows.map((row: any) => ({
+      id: row.id,
+      clientName: row.clients?.profiles?.full_name || "Unknown client",
+      serviceName: row.services?.name || "Unknown service",
+      createdAt: row.created_at
+    }))
+    );
 })();
 }, []);
 
@@ -916,6 +1037,23 @@ action={<button className="inline-flex items-center gap-2 rounded-lg bg-legacy-p
 ))}
 </div>
 </section>
+  <section className="soft-panel mt-5 p-5">
+  <h2 className="text-xl font-black text-legacy-ink">Service requests</h2>
+  <div className="mt-4 grid gap-3">
+    {pendingRequests.length === 0 && (
+  <p className="text-sm text-legacy-muted">No pending service requests.</p>
+  )}
+    {pendingRequests.map((request) => (
+  <div key={request.id} className="flex flex-col justify-between gap-3 rounded-xl border border-legacy-silver p-4 sm:flex-row sm:items-center">
+  <div>
+  <p className="font-black text-legacy-ink">{request.clientName}</p>
+  <p className="text-sm text-legacy-muted">Interested in: {request.serviceName}</p>
+  </div>
+  <StatusPill tone="purple">Pending</StatusPill>
+  </div>
+  ))}
+  </div>
+  </section>
 </>
 );
 }
