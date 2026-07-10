@@ -146,7 +146,7 @@ export function AdminSignatures() {
           client_id: selectedClient,
           uploaded_by: user?.id ?? null,
           name: template?.name ?? "Agreement",
-          storage_path: null,
+          storage_path: "",
           category: "General",
           status: "Assigned",
           folder: "Agreements",
