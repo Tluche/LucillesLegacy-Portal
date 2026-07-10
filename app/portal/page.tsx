@@ -34,6 +34,7 @@ import type { DocumentCategory, UserRole, ServiceTracker } from "@/lib/types";
 import { ClientBilling } from "@/components/billing-client";
 import { AdminBillingPanel } from "@/components/billing-admin";
 import { AdminMasterDocuments } from "@/components/admin-master-documents";
+import { AdminSignatures } from "@/components/admin-signatures";
 
 const categories: DocumentCategory[] = ["Tax", "Credit", "Bookkeeping", "Life Insurance", "General"];
 
@@ -157,6 +158,7 @@ return (
 {active === "admin-clients" && <AdminClients />}
 {active === "admin-master-docs" && <AdminMasterDocuments />}
 {active === "admin-documents" && <AdminDocuments />}
+  {active === "admin-signatures" && <AdminSignatures />}
 {active === "admin-resources" && <AdminResources />}
 {active === "admin-messages" && <AdminMessages />}
 {active === "admin-billing" && <AdminBillingPanel />}
@@ -447,6 +449,11 @@ const [loading, setLoading] = useState(true);
 const [uploading, setUploading] = useState(false);
 const [error, setError] = useState("");
 const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [signingDoc, setSigningDoc] = useState<any | null>(null);
+const [signingUrl, setSigningUrl] = useState<string | null>(null);
+const [signingLoading, setSigningLoading] = useState(false);
+const [signingError, setSigningError] = useState("");
+const [consentChecked, setConsentChecked] = useState(false);
 
 async function loadDocuments() {
 const supabase = supabaseBrowser();
@@ -456,7 +463,7 @@ return;
 }
 const result = await supabase
 .from("documents")
-.select("id, name, storage_path, category, status, folder, created_at")
+.select("id, name, storage_path, category, status, folder, created_at, requires_signature, signature_request_id")
 .eq("client_id", clientId)
 .order("created_at", { ascending: false });
 if (!result.error) {
@@ -541,6 +548,55 @@ newTab.location.href = result.data.signedUrl;
 setError("Unable to open this file. It may no longer exist in storage.");
 newTab?.close();
 }
+  
+async function startSigning(doc: any) {
+setSigningError("");
+setConsentChecked(false);
+setSigningUrl(null);
+if (!doc.signature_request_id) {
+setSigningError("This agreement is not ready to sign yet.");
+return;
+}
+setSigningDoc(doc);
+}
+
+async function beginEmbeddedSigning(consent: boolean) {
+if (!signingDoc) return;
+setSigningLoading(true);
+setSigningError("");
+const response = await fetch("/api/signatures/signing-url", {
+method: "POST",
+headers: { "Content-Type": "application/json" },
+body: JSON.stringify({ signatureRequestId: signingDoc.signature_request_id, consent })
+});
+const result = await response.json().catch(() => ({}));
+setSigningLoading(false);
+if (!response.ok || !result.ok) {
+setSigningError(result.error || "Unable to start the signing session.");
+return;
+}
+setSigningUrl(result.url);
+}
+
+function closeSigning() {
+setSigningDoc(null);
+setSigningUrl(null);
+setSigningError("");
+setConsentChecked(false);
+}
+
+async function handleSigningIframeLoad(event: React.SyntheticEvent<HTMLIFrameElement>) {
+try {
+const frame = event.currentTarget;
+const href = frame.contentWindow?.location.href;
+if (href && href.includes("/portal") && href.includes("signing=")) {
+closeSigning();
+await loadDocuments();
+}
+} catch {
+}
+}
+
 }
 
 async function deleteDocument(id: string, storagePath: string) {
@@ -597,8 +653,7 @@ className="flex flex-col justify-between gap-2 rounded-xl border border-legacy-s
 <p className="font-black text-legacy-ink">{document.name}</p>
 <p className="text-sm text-legacy-muted">
 Added {new Date(document.created_at).toLocaleDateString()} •{" "}
-<StatusPill tone={document.status === "Needs update" ? "amber" : "green"}>{document.status}</StatusPill>
-</p>
+<StatusPill tone={document.status === "Needs update" ? "amber" : document.status === "Signature Required" ? "purple" : "green"}>{document.status}</StatusPill></p>
 </div>
 <div className="flex gap-2">
 <button
@@ -607,6 +662,14 @@ className="rounded-lg border border-legacy-silver px-3 py-2 text-sm font-bold te
 >
 View
 </button>
+  {(document.status === "Signature Required" || document.requires_signature) && document.status !== "Signed" ? (
+<button
+onClick={() => startSigning(document)}
+className="rounded-lg bg-legacy-purple px-3 py-2 text-sm font-bold text-white"
+>
+Review & Sign
+</button>
+) : null}
 {folder === "Uploaded by Client" ? (
 <button
 onClick={() => deleteDocument(document.id, document.storage_path)}
@@ -624,6 +687,46 @@ Remove
 })}
 </div>
 </section>
+  {signingDoc ? (
+<div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4">
+<div className="w-full max-w-3xl rounded-2xl bg-white p-5 shadow-soft">
+<div className="mb-4 flex items-center justify-between gap-3">
+<h2 className="text-lg font-black text-legacy-ink">Review & sign: {signingDoc.name}</h2>
+<button onClick={closeSigning} className="rounded-lg border border-legacy-silver px-3 py-2 text-sm font-bold text-legacy-ink">
+Close
+</button>
+</div>
+{signingError ? <p className="mb-3 rounded-lg bg-legacy-lavender p-3 text-sm text-legacy-plum">{signingError}</p> : null}
+{!signingUrl ? (
+<div className="grid gap-4">
+<label className="flex items-start gap-3 rounded-xl border border-legacy-silver p-4 text-sm text-legacy-muted">
+<input
+type="checkbox"
+checked={consentChecked}
+onChange={(event) => setConsentChecked(event.target.checked)}
+className="mt-1"
+/>
+I consent to use electronic records and electronic signatures to sign this agreement.
+</label>
+<button
+disabled={!consentChecked || signingLoading}
+onClick={() => beginEmbeddedSigning(true)}
+className="rounded-lg bg-legacy-purple px-5 py-3 font-black text-white disabled:opacity-50"
+>
+{signingLoading ? "Preparing..." : "Continue to signing"}
+</button>
+</div>
+) : (
+<iframe
+src={signingUrl}
+onLoad={handleSigningIframeLoad}
+className="h-[70vh] w-full rounded-xl border border-legacy-silver"
+title="Sign your agreement"
+/>
+)}
+</div>
+</div>
+) : null}
 </>
 );
 }
