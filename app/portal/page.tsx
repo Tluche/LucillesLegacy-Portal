@@ -549,6 +549,8 @@ setError("Unable to open this file. It may no longer exist in storage.");
 newTab?.close();
 }
   
+}
+
 async function startSigning(doc: any) {
 setSigningError("");
 setConsentChecked(false);
@@ -597,7 +599,7 @@ await loadDocuments();
 }
 }
 
-}
+
 
 async function deleteDocument(id: string, storagePath: string) {
 const supabase = supabaseBrowser();
