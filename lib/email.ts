@@ -17,7 +17,10 @@ export type EmailTemplateKey =
 | "DOCUMENT_REQUESTED"
 | "STATUS_UPDATE"
 | "SERVICE_APPROVAL"
-| "SERVICE_COMPLETION";
+| "SERVICE_COMPLETION"
+| "SIGNATURE_READY"
+| "SIGNATURE_COMPLETED"
+| "SIGNATURE_ATTENTION";
 
 type EmailPayload = {
   to: string;
@@ -70,6 +73,18 @@ const TEMPLATE_COPY: Record<EmailTemplateKey, (data: Record<string, any>) => { s
   SERVICE_COMPLETION: (data) => ({
     subject: "A service was marked complete",
     text: "Your service" + (data?.service ? (" (" + data.service + ")") : "") + " was marked complete. Log in to your client portal for details."
+  }),
+  SIGNATURE_READY: (data) => ({
+    subject: "Your agreement is ready to sign",
+    text: "An agreement" + (data?.label ? (" (" + data.label + ")") : "") + " is ready for your electronic signature. Log in to your client portal to review and sign."
+  }),
+  SIGNATURE_COMPLETED: (data) => ({
+    subject: "Your signed agreement is now available",
+    text: "Your signed agreement" + (data?.label ? (" (" + data.label + ")") : "") + " is now available in your Document Vault. Log in to your client portal to view it."
+  }),
+  SIGNATURE_ATTENTION: (data) => ({
+    subject: "A signature request requires your attention",
+    text: "A signature request" + (data?.label ? (" for " + data.label) : "") + " needs your attention. Log in to your client portal for details."
   })
 };
 
