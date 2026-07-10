@@ -61,7 +61,6 @@ function statusTone(status: string | null | undefined): "purple" | "green" | "gr
 }
 
 export function AdminSignatures() {
-  const supabase = supabaseBrowser()
   const [clients, setClients] = useState<ClientOption[]>([])
   const [templates, setTemplates] = useState<TemplateOption[]>([])
   const [tracked, setTracked] = useState<TrackedDoc[]>([])
@@ -84,6 +83,11 @@ export function AdminSignatures() {
   const [rowError, setRowError] = useState("")
 
   async function loadData() {
+    const supabase = supabaseBrowser()
+    if (!supabase) {
+      setLoading(false)
+      return
+    }
     setLoading(true)
     const [clientsRes, templatesRes, trackedRes] = await Promise.all([
       supabase
@@ -118,8 +122,13 @@ export function AdminSignatures() {
 
   async function assignAndSend(event: React.FormEvent) {
     event.preventDefault()
+    const supabase = supabaseBrowser()
     setAssignError("")
     setAssignSuccess("")
+    if (!supabase) {
+      setAssignError("Could not connect to the database.")
+      return
+    }
     if (!selectedClient || !selectedTemplate) {
       setAssignError("Choose a client and an agreement template.")
       return
@@ -218,6 +227,8 @@ export function AdminSignatures() {
 
   async function downloadFile(path: string | null) {
     if (!path) return
+    const supabase = supabaseBrowser()
+    if (!supabase) return
     const { data, error } = await supabase.storage.from("SIGNED DOCUMENTS").createSignedUrl(path, 60)
     if (error || !data?.signedUrl) {
       setRowError(error?.message || "Could not create a download link.")
@@ -228,6 +239,8 @@ export function AdminSignatures() {
 
   async function openHistory(doc: TrackedDoc) {
     if (!doc.signature_request_id) return
+    const supabase = supabaseBrowser()
+    if (!supabase) return
     setHistoryTarget(doc)
     setHistoryLoading(true)
     const { data } = await supabase
