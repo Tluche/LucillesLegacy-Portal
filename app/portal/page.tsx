@@ -1695,7 +1695,7 @@ email: row.profiles?.email || "",
 services: serviceNames || "No services assigned yet",
 status: row.status || "Active",
 nextStep: nextStep || "No pending next step.",
-assignedServices
+assignedServices,
 assignedServiceIds
 };
 })
