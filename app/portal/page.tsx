@@ -449,6 +449,8 @@ const [loading, setLoading] = useState(true);
 const [uploading, setUploading] = useState(false);
 const [error, setError] = useState("");
 const [selectedFile, setSelectedFile] = useState<File | null>(null);
+const [uploadCategory, setUploadCategory] = useState("General");
+const [uploadTaxYear, setUploadTaxYear] = useState("");
   const [signingDoc, setSigningDoc] = useState<any | null>(null);
 const [signingUrl, setSigningUrl] = useState<string | null>(null);
 const [signingLoading, setSigningLoading] = useState(false);
@@ -463,7 +465,7 @@ return;
 }
 const result = await supabase
 .from("documents")
-.select("id, name, storage_path, category, status, folder, created_at, requires_signature, signature_request_id")
+.select("id, name, storage_path, category, status, folder, tax_year, created_at, requires_signature, signature_request_id")
 .eq("client_id", clientId)
 .order("created_at", { ascending: false });
 if (!result.error) {
@@ -512,8 +514,9 @@ client_id: clientId,
 uploaded_by: userId,
 name: file.name,
 storage_path: path,
-category: "General",
+category: uploadCategory,
 folder: "Uploaded by Client",
+tax_year: uploadCategory === "Tax" && uploadTaxYear ? Number(uploadTaxYear) : null,
 visible_to_client: true,
 status: "Received"
 });
@@ -534,6 +537,8 @@ metadata: { document_name: file.name }
 
 form.reset();
 setSelectedFile(null);
+setUploadCategory("General");
+setUploadTaxYear("");
 await loadDocuments();
 }
 
@@ -630,6 +635,22 @@ required
 onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)}
 />
 </label>
+<select className="rounded-lg border border-legacy-silver px-3 py-3" value={uploadCategory} onChange={(e) => setUploadCategory(e.target.value)}>
+<option value="General">General</option>
+<option value="Tax">Tax</option>
+<option value="Credit">Credit</option>
+<option value="Bookkeeping">Bookkeeping</option>
+<option value="Life Insurance">Life Insurance</option>
+</select>
+{uploadCategory === "Tax" ? (
+<select className="rounded-lg border border-legacy-silver px-3 py-3" value={uploadTaxYear} onChange={(e) => setUploadTaxYear(e.target.value)}>
+<option value="">Tax year (optional)</option>
+{Array.from({ length: 7 }).map((_, i) => {
+const year = new Date().getFullYear() - i;
+return <option key={year} value={year}>{year}</option>;
+})}
+</select>
+) : null}
 <button disabled={uploading} className="rounded-lg bg-legacy-purple px-5 py-3 font-black text-white disabled:opacity-50">
 {uploading ? "Uploading..." : "Upload document"}
 </button>
@@ -1508,7 +1529,7 @@ return (
 
 function AdminClients() {
 const [clientRows, setClientRows] = useState<
-{ id: string; name: string; email: string; services: string; status: string; nextStep: string; assignedServiceIds: string[] }[]
+{ id: string; name: string; email: string; services: string; status: string; nextStep: string; assignedServiceIds: string[]; assignedServices: { clientServiceId: string; serviceId: string; serviceName: string; stage: string; progress: number; adminNotes: string; nextStep: string; stages: string[] }[] }[]
 >([]);
 const [sendingId, setSendingId] = useState<string | null>(null);
 const [feedback, setFeedback] = useState<{ id: string; message: string } | null>(null);
@@ -1519,6 +1540,16 @@ const [assignFeedback, setAssignFeedback] = useState<{ id: string; message: stri
 const [timelineClientId, setTimelineClientId] = useState<string | null>(null);
 const [timelineRows, setTimelineRows] = useState<any[]>([]);
 const [timelineLoading, setTimelineLoading] = useState(false);
+const [editingServiceId, setEditingServiceId] = useState<string | null>(null);
+const [editStage, setEditStage] = useState("");
+const [editProgress, setEditProgress] = useState(0);
+const [editNotes, setEditNotes] = useState("");
+const [editNextStep, setEditNextStep] = useState("");
+const [savingProgress, setSavingProgress] = useState(false);
+const [progressFeedback, setProgressFeedback] = useState<{ id: string; message: string } | null>(null);
+const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+const [deletingId, setDeletingId] = useState<string | null>(null);
+const [deleteFeedback, setDeleteFeedback] = useState<{ id: string; message: string } | null>(null);
 
 async function loadServices() {
 const supabase = supabaseBrowser();
@@ -1553,6 +1584,75 @@ if (result.error) {
 setAssigningId(null);
 }
 
+function startEditProgress(service: { clientServiceId: string; stage: string; progress: number; adminNotes: string; nextStep: string }) {
+setEditingServiceId(service.clientServiceId);
+setEditStage(service.stage);
+setEditProgress(service.progress);
+setEditNotes(service.adminNotes);
+setEditNextStep(service.nextStep);
+setProgressFeedback(null);
+}
+
+function cancelEditProgress() {
+setEditingServiceId(null);
+}
+
+async function saveProgress(clientId: string, clientServiceId: string, serviceName: string) {
+const supabase = supabaseBrowser();
+if (!supabase) return;
+setSavingProgress(true);
+setProgressFeedback(null);
+const updateResult = await supabase
+.from("client_services")
+.update({
+current_stage: editStage,
+progress: editProgress,
+admin_notes: editNotes,
+next_step: editNextStep,
+last_updated: new Date().toISOString()
+})
+.eq("id", clientServiceId);
+if (updateResult.error) {
+setProgressFeedback({ id: clientServiceId, message: updateResult.error.message });
+setSavingProgress(false);
+return;
+}
+await supabase.from("client_timeline").insert({
+client_id: clientId,
+event_type: "status_updated",
+title: "Status updated: " + serviceName,
+description: serviceName + " is now at \"" + editStage + "\" (" + editProgress + "%)." + (editNextStep ? " Next step: " + editNextStep : ""),
+metadata: { client_service_id: clientServiceId, stage: editStage, progress: editProgress }
+});
+await supabase.from("notifications").insert({
+client_id: clientId,
+title: "Your status was updated",
+body: serviceName + " is now at \"" + editStage + "\" (" + editProgress + "%).",
+kind: "status_updated"
+});
+setSavingProgress(false);
+setEditingServiceId(null);
+await loadClients();
+}
+
+async function deleteClient(clientId: string) {
+setDeletingId(clientId);
+setDeleteFeedback(null);
+const res = await fetch("/api/admin/delete-client", {
+method: "POST",
+headers: { "Content-Type": "application/json" },
+body: JSON.stringify({ clientId })
+});
+const json = await res.json().catch(() => ({}));
+if (res.ok && json.success) {
+setConfirmDeleteId(null);
+await loadClients();
+} else {
+setDeleteFeedback({ id: clientId, message: json.error || "Could not delete client." });
+}
+setDeletingId(null);
+}
+
 async function openTimeline(clientId: string) {
 const supabase = supabaseBrowser();
 if (!supabase) return;
@@ -1578,7 +1678,7 @@ if (!supabase) return;
 
 const clientsResult = await supabase
 .from("clients")
-.select("id, status, profiles(full_name, email), client_services(service_id, current_stage, next_step, services(name))");
+.select("id, status, profiles(full_name, email), client_services(id, service_id, current_stage, progress, admin_notes, next_step, services(name, stages))");
 const rows: any = clientsResult.data || [];
 
 setClientRows(
@@ -1587,6 +1687,7 @@ const services = (row.client_services || []) as any[];
 const serviceNames = services.map((cs) => cs.services?.name).filter(Boolean).join(", ");
 const nextStep = services.find((cs) => cs.next_step)?.next_step;
 const assignedServiceIds = services.map((cs) => cs.service_id).filter(Boolean);
+const assignedServices = services.map((cs: any) => ({ clientServiceId: cs.id, serviceId: cs.service_id, serviceName: cs.services?.name || "Service", stage: cs.current_stage || "", progress: typeof cs.progress === "number" ? cs.progress : 0, adminNotes: cs.admin_notes || "", nextStep: cs.next_step || "", stages: cs.services?.stages || [] }));
 return {
 id: row.id,
 name: row.profiles?.full_name || "Unknown client",
@@ -1594,6 +1695,7 @@ email: row.profiles?.email || "",
 services: serviceNames || "No services assigned yet",
 status: row.status || "Active",
 nextStep: nextStep || "No pending next step.",
+assignedServices
 assignedServiceIds
 };
 })
@@ -1649,7 +1751,46 @@ return (
 <p className="text-sm text-legacy-muted">{client.email}</p>
 <button onClick={() => openTimeline(client.id)} className="mt-1 text-xs font-bold text-legacy-purple underline">View timeline</button>
 </td>
-<td>{client.services}</td>
+<td>
+<div className="grid gap-2">
+{client.assignedServices.length === 0 ? (
+<span className="text-legacy-muted">{client.services}</span>
+) : (
+client.assignedServices.map((service) => (
+<div key={service.clientServiceId} className="rounded-lg border border-legacy-silver p-2">
+<p className="font-bold text-legacy-ink">{service.serviceName}</p>
+{editingServiceId === service.clientServiceId ? (
+<div className="mt-2 grid gap-2">
+<select className="rounded-lg border border-legacy-silver px-2 py-1 text-sm" value={editStage} onChange={(e) => setEditStage(e.target.value)}>
+{service.stages.length === 0 ? <option value={editStage}>{editStage || "Getting started"}</option> : null}
+{service.stages.map((stage) => (
+<option key={stage} value={stage}>{stage}</option>
+))}
+</select>
+<input type="number" min={0} max={100} className="rounded-lg border border-legacy-silver px-2 py-1 text-sm" value={editProgress} onChange={(e) => setEditProgress(Number(e.target.value))} />
+<textarea className="rounded-lg border border-legacy-silver px-2 py-1 text-sm" placeholder="Admin notes" rows={2} value={editNotes} onChange={(e) => setEditNotes(e.target.value)} />
+<input className="rounded-lg border border-legacy-silver px-2 py-1 text-sm" placeholder="Next step" value={editNextStep} onChange={(e) => setEditNextStep(e.target.value)} />
+<div className="flex gap-2">
+<button onClick={() => saveProgress(client.id, service.clientServiceId, service.serviceName)} disabled={savingProgress} className="rounded-lg bg-legacy-purple px-3 py-1 text-sm font-bold text-white disabled:opacity-50">
+{savingProgress ? "Saving..." : "Save"}
+</button>
+<button onClick={cancelEditProgress} className="rounded-lg border border-legacy-silver px-3 py-1 text-sm font-bold text-legacy-muted">Cancel</button>
+</div>
+{progressFeedback && progressFeedback.id === service.clientServiceId ? (
+<p className="text-xs text-legacy-muted">{progressFeedback.message}</p>
+) : null}
+</div>
+) : (
+<div className="mt-1">
+<p className="text-xs text-legacy-muted">{service.stage} - {service.progress}%</p>
+<button onClick={() => startEditProgress(service)} className="text-xs font-bold text-legacy-purple underline">Update progress</button>
+</div>
+)}
+</div>
+))
+)}
+</div>
+</td>
 <td><StatusPill>{client.status}</StatusPill></td>
 <td className="text-legacy-muted">{client.nextStep}</td>
 <td>
@@ -1689,6 +1830,24 @@ className="rounded-lg border border-legacy-silver px-3 py-2 text-sm font-bold te
 {feedback && feedback.id === client.id ? (
 <p className="mt-1 text-xs text-legacy-muted">{feedback.message}</p>
 ) : null}
+<div className="mt-2">
+{confirmDeleteId === client.id ? (
+<div className="grid gap-1">
+<p className="text-xs font-bold text-red-600">Delete this client and all their data?</p>
+<div className="flex gap-2">
+<button onClick={() => deleteClient(client.id)} disabled={deletingId === client.id} className="rounded-lg bg-red-600 px-3 py-1 text-xs font-bold text-white disabled:opacity-50">
+{deletingId === client.id ? "Deleting..." : "Confirm delete"}
+</button>
+<button onClick={() => setConfirmDeleteId(null)} className="rounded-lg border border-legacy-silver px-3 py-1 text-xs font-bold text-legacy-muted">Cancel</button>
+</div>
+</div>
+) : (
+<button onClick={() => setConfirmDeleteId(client.id)} className="text-xs font-bold text-red-600 underline">Delete client</button>
+)}
+{deleteFeedback && deleteFeedback.id === client.id ? (
+<p className="mt-1 text-xs text-legacy-muted">{deleteFeedback.message}</p>
+) : null}
+</div>
 </td>
 </tr>
 ))}
@@ -1763,7 +1922,7 @@ const supabase = supabaseBrowser();
 if (!supabase) { setLoading(false); return; }
 const result = await supabase
 .from("documents")
-.select("id, name, storage_path, category, status, folder, internal_notes, visible_to_client, service_slug, created_at, client_id, clients(profiles(full_name))")
+.select("id, name, storage_path, category, status, folder, internal_notes, visible_to_client, service_slug, tax_year, created_at, client_id, clients(profiles(full_name))")
 .order("created_at", { ascending: false });
 if (!result.error) {
 setDocRows(result.data || []);
@@ -1798,6 +1957,7 @@ const name = String(formData.get("name") || "");
 const category = String(formData.get("category") || UPLOAD_CATEGORIES[0]);
 const serviceSlug = String(formData.get("serviceSlug") || "");
 const internalNotes = String(formData.get("internalNotes") || "");
+const taxYear = String(formData.get("taxYear") || "");
 const visibleToClient = formData.get("visibleToClient") === "on";
 const notifyClient = formData.get("notifyClient") === "on";
 const file = formData.get("file") as File | null;
@@ -1839,7 +1999,8 @@ status: "Filed",
 folder,
 visible_to_client: visibleToClient,
 internal_notes: internalNotes || null,
-service_slug: serviceSlug || null
+service_slug: serviceSlug || null,
+tax_year: taxYear ? Number(taxYear) : null
 });
 
 if (insertResult.error) {
@@ -1974,6 +2135,7 @@ description="Upload documents directly into a client's vault, then file, rename,
 <option key={category}>{category}</option>
 ))}
 </select>
+<input name="taxYear" type="number" className="rounded-lg border border-legacy-silver px-3 py-3" placeholder="Tax year (optional, e.g. 2023)" />
 <select name="serviceSlug" className="rounded-lg border border-legacy-silver px-3 py-3" defaultValue="">
 <option value="">General (no specific service)</option>
 {allServices.map((service) => (
