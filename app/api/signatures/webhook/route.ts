@@ -15,6 +15,7 @@ export async function POST(request: Request) {
 
   const rawBody = await request.text();
     const signatureHeader = request.headers.get("x-docusign-signature-1");
+    console.log("[webhook-debug] hasSig:", !!signatureHeader, "sigPreview:", (signatureHeader || "none").slice(0,10), "bodyLen:", rawBody.length);
 
   if (!verifyConnectSignature(rawBody, signatureHeader)) {
         return NextResponse.json({ error: "Invalid webhook signature." }, { status: 400 });
