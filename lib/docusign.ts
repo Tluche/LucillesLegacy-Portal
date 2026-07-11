@@ -192,7 +192,26 @@ export async function createEnvelope(params: {
                   }
                         ]
         },
-        status: "sent"
+        status: "sent",
+      eventNotification: {
+          url: (process.env.NEXT_PUBLIC_SITE_URL || "https://portal.lucilleslegacy.net") + "/api/signatures/webhook",
+          loggingEnabled: "true",
+          requireAcknowledgment: "true",
+          includeDocuments: "false",
+          includeCertificateOfCompletion: "false",
+          includeEnvelopeVoidReason: "true",
+          includeTimeZone: "true",
+          envelopeEventStatusCode: [
+              { envelopeEventStatusCode: "completed" },
+              { envelopeEventStatusCode: "declined" },
+              { envelopeEventStatusCode: "voided" }
+              ],
+          recipientEvents: [
+              { recipientEventStatusCode: "Completed" },
+              { recipientEventStatusCode: "Declined" },
+              { recipientEventStatusCode: "AutoResponded" }
+              ]
+      }
   };
 
   const result = await docusignFetch("/envelopes", { method: "POST", body: JSON.stringify(envelopeDefinition) });
