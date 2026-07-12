@@ -41,10 +41,6 @@ const categories: DocumentCategory[] = ["Tax", "Credit", "Bookkeeping", "Life In
 export default function PortalPage() {
 const [role, setRole] = useState<UserRole>("client");
 const [active, setActive] = useState("dashboard");
-const [messageText, setMessageText] = useState("");
-
-const visibleMessages = useMemo(() => messages, []);
-
 const [realName, setRealName] = useState<string | null>(null);
 const [realServices, setRealServices] = useState<ServiceTracker[]>([]);
 const [realClientId, setRealClientId] = useState<string | null>(null);
@@ -142,11 +138,11 @@ return (
 {active === "dashboard" && <Dashboard displayName={displayName} displayServices={displayServices} displayNotifications={displayNotifications} displayAppointments={displayAppointments} onUploadClick={() => setActive("documents")} />}
 {active === "notifications" && <Notifications clientId={realClientId} />}
 {active === "messages" && (
-<Messages messageText={messageText} setMessageText={setMessageText} visibleMessages={visibleMessages} />
+<Messages clientId={realClientId} />
 )}
 {active === "documents" && <Documents clientId={realClientId} />}
   {active === "status" && <ServiceStatus clientId={realClientId} />}
-{active === "appointments" && <Appointments />}
+{active === "appointments" && <Appointments appointments={displayAppointments} clientId={realClientId} />}
 {active === "billing" && <ClientBilling clientId={realClientId} />}
 {active === "resources" && <Resources />}
 {active === "profile" && <Profile />}
@@ -161,6 +157,7 @@ return (
   {active === "admin-signatures" && <AdminSignatures />}
 {active === "admin-resources" && <AdminResources />}
 {active === "admin-messages" && <AdminMessages />}
+{active === "admin-scheduling" && <AdminScheduling />}
 {active === "admin-billing" && <AdminBillingPanel />}
 </>
 )}
@@ -272,89 +269,117 @@ icon={CalendarDays}
 );
 }
 
-function Messages({
-visibleMessages,
-messageText,
-setMessageText
-}: {
-visibleMessages: typeof messages;
-messageText: string;
-setMessageText: (value: string) => void;
-}) {
-return (
-<>
-<PageHeader
-eyebrow="Messages"
-title="Message center"
-description="Ask questions, reply to requests, and keep financial conversations in one secure place."
-/>
-<section className="grid gap-5 lg:grid-cols-[22rem_1fr]">
-<div className="soft-panel p-4">
-<div className="mb-4 flex items-center gap-2 rounded-xl border border-legacy-silver px-3 py-2">
-<Search size={18} className="text-legacy-muted" />
-<input className="w-full border-0 bg-transparent outline-none" placeholder="Search messages" />
-</div>
-<div className="grid gap-2">
-{visibleMessages.map((message) => (
-<button key={message.id} className="rounded-xl border border-legacy-silver bg-white p-3 text-left hover:border-legacy-purple">
-<div className="flex justify-between gap-3">
-<p className="font-black text-legacy-ink">{message.sender === "admin" ? "Lucille's Legacy" : "You"}</p>
-{message.unread ? <span className="h-2.5 w-2.5 rounded-full bg-legacy-purple" /> : null}
-</div>
-<p className="mt-1 line-clamp-2 text-sm text-legacy-muted">{message.preview}</p>
-<p className="mt-2 text-xs font-bold text-legacy-muted">{message.timestamp}</p>
-</button>
-))}
-</div>
-</div>
+function Messages({ clientId }: { clientId: string | null }) {
+  const [thread, setThread] = useState<
+    { id: string; body: string; sender_id: string; created_at: string }[]
+  >([]);
+  const [messageText, setMessageText] = useState("");
+  const [userId, setUserId] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
 
-<div className="soft-panel flex min-h-[32rem] flex-col p-4">
-<div className="border-b border-legacy-silver pb-4">
-<p className="font-black text-legacy-ink">Lucille&apos;s Legacy</p>
-<p className="text-sm text-legacy-muted">Usually replies within one business day.</p>
-</div>
-<div className="flex-1 space-y-4 overflow-auto py-5">
-{visibleMessages.map((message) => (
-<div
-key={message.id}
-className={`max-w-[82%] rounded-2xl p-4 ${
-message.sender === "client"
-? "ml-auto bg-legacy-purple text-white"
-: "bg-legacy-lavender text-legacy-ink"
-}`}
->
-<p className="leading-7">{message.body}</p>
-<p className={`mt-2 text-xs font-bold ${message.sender === "client" ? "text-white/70" : "text-legacy-muted"}`}>
-{message.timestamp}
-</p>
-</div>
-))}
-</div>
-<form
-onSubmit={(event) => {
-event.preventDefault();
-setMessageText("");
-}}
-className="flex flex-col gap-3 border-t border-legacy-silver pt-4 sm:flex-row"
->
-<button type="button" className="rounded-lg border border-legacy-silver px-4 py-3 font-bold text-legacy-plum">
-Attach
-</button>
-<input
-value={messageText}
-onChange={(event) => setMessageText(event.target.value)}
-className="min-w-0 flex-1 rounded-lg border border-legacy-silver px-4 py-3"
-placeholder="Write a message..."
-required
-/>
-<button className="inline-flex items-center justify-center gap-2 rounded-lg bg-legacy-purple px-5 py-3 font-black text-white">
-<Send size={18} /> Send
-</button>
-</form>
-</div>
-</section>
-</>
-);
+  useEffect(() => {
+    if (!clientId) return;
+    const supabase = supabaseBrowser();
+    if (!supabase) return;
+    let active = true;
+
+    async function load() {
+      const { data: userData } = await supabase.auth.getUser();
+      if (active) setUserId(userData.user?.id || null);
+      const { data } = await supabase
+        .from("messages")
+        .select("id, body, sender_id, created_at")
+        .eq("client_id", clientId)
+        .order("created_at", { ascending: true });
+      if (active) setThread(data || []);
+    }
+
+    load();
+    const channel = supabase
+      .channel(`messages-client-${clientId}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "messages", filter: `client_id=eq.${clientId}` },
+        () => load()
+      )
+      .subscribe();
+
+    return () => {
+      active = false;
+      supabase.removeChannel(channel);
+    };
+  }, [clientId]);
+
+  async function sendMessage(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!clientId || !messageText.trim()) return;
+    const supabase = supabaseBrowser();
+    if (!supabase) return;
+    setSending(true);
+    const { data: userData } = await supabase.auth.getUser();
+    if (!userData.user) {
+      setSending(false);
+      return;
+    }
+    await supabase.from("messages").insert({
+      client_id: clientId,
+      sender_id: userData.user.id,
+      body: messageText.trim()
+    });
+    setMessageText("");
+    const { data } = await supabase
+      .from("messages")
+      .select("id, body, sender_id, created_at")
+      .eq("client_id", clientId)
+      .order("created_at", { ascending: true });
+    setThread(data || []);
+    setSending(false);
+  }
+
+  return (
+    <>
+      <PageHeader
+        eyebrow="Messages"
+        title="Message center"
+        description="Ask questions, reply to requests, and keep financial conversations in one secure place."
+      />
+      <section className="soft-panel flex h-[32rem] flex-col p-5">
+        <div className="flex-1 space-y-4 overflow-auto py-2">
+          {thread.length === 0 && (
+            <p className="text-sm text-legacy-muted">No messages yet. Send a message to get started.</p>
+          )}
+          {thread.map((message) => (
+            <div
+              key={message.id}
+              className={`max-w-[82%] rounded-2xl p-4 ${
+                message.sender_id === userId ? "ml-auto bg-legacy-purple text-white" : "bg-legacy-lavender text-legacy-ink"
+              }`}
+            >
+              <p className="leading-7">{message.body}</p>
+              <p className={`mt-2 text-xs font-bold ${message.sender_id === userId ? "text-white/70" : "text-legacy-muted"}`}>
+                {new Date(message.created_at).toLocaleString()}
+              </p>
+            </div>
+          ))}
+        </div>
+        <form onSubmit={sendMessage} className="flex flex-col gap-3 border-t border-legacy-silver pt-4 sm:flex-row">
+          <input
+            value={messageText}
+            onChange={(event) => setMessageText(event.target.value)}
+            className="min-w-0 flex-1 rounded-lg border border-legacy-silver px-4 py-3"
+            placeholder="Write a message..."
+            required
+          />
+          <button
+            disabled={sending}
+            className="inline-flex items-center justify-center gap-2 rounded-lg bg-legacy-purple px-5 py-3 font-black text-white disabled:opacity-50"
+          >
+            <Send size={18} /> Send
+          </button>
+        </form>
+      </section>
+    </>
+  );
 }
 
 function Notifications({ clientId }: { clientId: string | null }) {
@@ -905,36 +930,111 @@ function ServiceStatus({ clientId }: { clientId: string | null }) {
     </>
     );
 }
-function Appointments() {
-return (
-<>
-<PageHeader
-eyebrow="Appointments"
-title="Appointments"
-description="See upcoming and past appointments. This area is ready for Calendly or Google Calendar later."
-action={<button className="rounded-lg bg-legacy-purple px-5 py-3 font-black text-white">Schedule</button>}
-/>
-<div className="grid gap-5 lg:grid-cols-2">
-{["Upcoming", "Past"].map((status) => (
-<section key={status} className="soft-panel p-5">
-<h2 className="text-xl font-black text-legacy-ink">{status} appointments</h2>
-<div className="mt-4 grid gap-3">
-{appointments.filter((appointment) => appointment.status === status).map((appointment) => (
-<div key={appointment.id} className="rounded-xl border border-legacy-silver p-4">
-<p className="font-black text-legacy-ink">{appointment.title}</p>
-<p className="mt-1 text-legacy-muted">{appointment.date} at {appointment.time}</p>
-<div className="mt-4 flex flex-wrap gap-2">
-<button className="rounded-lg border border-legacy-silver px-3 py-2 text-sm font-bold text-legacy-plum">Reschedule</button>
-<button className="rounded-lg border border-legacy-silver px-3 py-2 text-sm font-bold text-legacy-muted">Cancel</button>
-</div>
-</div>
-))}
-</div>
-</section>
-))}
-</div>
-</>
-);
+function Appointments({
+  appointments,
+  clientId
+}: {
+  appointments: { id: string; title: string; date: string; time: string; status: string }[];
+  clientId: string | null;
+}) {
+  const [showRequest, setShowRequest] = useState(false);
+  const [requestText, setRequestText] = useState("");
+  const [sending, setSending] = useState(false);
+  const [feedback, setFeedback] = useState("");
+
+  function requestChange(appointment: { title: string; date: string; time: string }) {
+    setRequestText(`Regarding "${appointment.title}" on ${appointment.date} at ${appointment.time}: `);
+    setShowRequest(true);
+  }
+
+  async function sendRequest(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!clientId || !requestText.trim()) return;
+    const supabase = supabaseBrowser();
+    if (!supabase) return;
+    setSending(true);
+    const { data: userData } = await supabase.auth.getUser();
+    if (userData.user) {
+      await supabase.from("messages").insert({
+        client_id: clientId,
+        sender_id: userData.user.id,
+        body: `Appointment request: ${requestText.trim()}`
+      });
+      setFeedback("Your request has been sent. We will confirm your appointment soon.");
+      setRequestText("");
+      setShowRequest(false);
+    }
+    setSending(false);
+  }
+
+  return (
+    <>
+      <PageHeader
+        eyebrow="Appointments"
+        title="Appointments"
+        description="See upcoming and past appointments, or request a new one."
+        action={
+          <button
+            onClick={() => setShowRequest((value) => !value)}
+            className="rounded-lg bg-legacy-purple px-5 py-3 font-black text-white"
+          >
+            Request appointment
+          </button>
+        }
+      />
+      {showRequest && (
+        <form onSubmit={sendRequest} className="soft-panel mb-5 grid gap-3 p-5">
+          <textarea
+            value={requestText}
+            onChange={(event) => setRequestText(event.target.value)}
+            className="rounded-lg border border-legacy-silver px-3 py-3"
+            rows={3}
+            placeholder="What would you like to schedule, and when works best for you?"
+            required
+          />
+          <button
+            disabled={sending}
+            className="w-fit rounded-lg bg-legacy-purple px-5 py-3 font-black text-white disabled:opacity-50"
+          >
+            {sending ? "Sending..." : "Send request"}
+          </button>
+        </form>
+      )}
+      {feedback && <p className="mb-4 text-sm text-legacy-muted">{feedback}</p>}
+      <div className="grid gap-5 lg:grid-cols-2">
+        {["Upcoming", "Past"].map((bucket) => (
+          <section key={bucket} className="soft-panel p-5">
+            <h2 className="text-xl font-black text-legacy-ink">{bucket} appointments</h2>
+            <div className="mt-4 grid gap-3">
+              {appointments
+                .filter((appointment) =>
+                  bucket === "Upcoming" ? appointment.status === "Upcoming" : appointment.status !== "Upcoming"
+                )
+                .map((appointment) => (
+                  <div key={appointment.id} className="rounded-xl border border-legacy-silver p-4">
+                    <p className="font-black text-legacy-ink">{appointment.title}</p>
+                    <p className="mt-1 text-legacy-muted">
+                      {appointment.date} at {appointment.time}
+                    </p>
+                    {bucket === "Upcoming" && (
+                      <button
+                        onClick={() => requestChange(appointment)}
+                        className="mt-3 rounded-lg border border-legacy-silver px-3 py-2 text-sm font-bold text-legacy-plum"
+                      >
+                        Request reschedule or cancellation
+                      </button>
+                    )}
+                  </div>
+                ))}
+              {appointments.filter((appointment) =>
+                bucket === "Upcoming" ? appointment.status === "Upcoming" : appointment.status !== "Upcoming"
+              ).length === 0 && <p className="text-sm text-legacy-muted">Nothing here yet.</p>}
+            </div>
+          </section>
+        ))}
+      </div>
+    </>
+  );
 }
 
 function Billing({ clientId }: { clientId: string | null }) {
@@ -1551,6 +1651,16 @@ const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 const [deletingId, setDeletingId] = useState<string | null>(null);
 const [deleteFeedback, setDeleteFeedback] = useState<{ id: string; message: string } | null>(null);
 
+const [profileClientId, setProfileClientId] = useState<string | null>(null);
+const [profileLoading, setProfileLoading] = useState(false);
+const [profileInfo, setProfileInfo] = useState<any>(null);
+const [profileDocs, setProfileDocs] = useState<any[]>([]);
+const [profileThread, setProfileThread] = useState<any[]>([]);
+const [profileMessageText, setProfileMessageText] = useState("");
+const [profileNotesDraft, setProfileNotesDraft] = useState("");
+const [savingNotes, setSavingNotes] = useState(false);
+const [profileUserId, setProfileUserId] = useState<string | null>(null);
+
 async function loadServices() {
 const supabase = supabaseBrowser();
 if (!supabase) return;
@@ -1672,6 +1782,73 @@ setTimelineClientId(null);
 setTimelineRows([]);
 }
 
+async function openProfile(clientId: string) {
+  const supabase = supabaseBrowser();
+  if (!supabase) return;
+  setProfileClientId(clientId);
+  setProfileLoading(true);
+  const { data: userData } = await supabase.auth.getUser();
+  setProfileUserId(userData.user?.id || null);
+  const [profileResult, docsResult, threadResult] = await Promise.all([
+    supabase
+      .from("clients")
+      .select("id, status, client_number, client_notes, profiles(full_name, email, phone, address, emergency_contact, preferred_contact)")
+      .eq("id", clientId)
+      .single(),
+    supabase
+      .from("documents")
+      .select("id, name, category, status, visible_to_client, created_at")
+      .eq("client_id", clientId)
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("messages")
+      .select("id, body, sender_id, created_at")
+      .eq("client_id", clientId)
+      .order("created_at", { ascending: true })
+  ]);
+  setProfileInfo(profileResult.data);
+  setProfileNotesDraft((profileResult.data as any)?.client_notes || "");
+  setProfileDocs(docsResult.data || []);
+  setProfileThread(threadResult.data || []);
+  setProfileLoading(false);
+}
+
+function closeProfile() {
+  setProfileClientId(null);
+  setProfileInfo(null);
+  setProfileDocs([]);
+  setProfileThread([]);
+  setProfileNotesDraft("");
+}
+
+async function saveProfileNotes() {
+  if (!profileClientId) return;
+  const supabase = supabaseBrowser();
+  if (!supabase) return;
+  setSavingNotes(true);
+  await supabase.from("clients").update({ client_notes: profileNotesDraft }).eq("id", profileClientId);
+  setSavingNotes(false);
+}
+
+async function sendProfileMessage(event: React.FormEvent<HTMLFormElement>) {
+  event.preventDefault();
+  if (!profileClientId || !profileMessageText.trim() || !profileUserId) return;
+  const supabase = supabaseBrowser();
+  if (!supabase) return;
+  await supabase.from("messages").insert({
+    client_id: profileClientId,
+    sender_id: profileUserId,
+    body: profileMessageText.trim()
+  });
+  setProfileMessageText("");
+  const { data } = await supabase
+    .from("messages")
+    .select("id, body, sender_id, created_at")
+    .eq("client_id", profileClientId)
+    .order("created_at", { ascending: true });
+  setProfileThread(data || []);
+}
+
 async function loadClients() {
 const supabase = supabaseBrowser();
 if (!supabase) return;
@@ -1750,6 +1927,7 @@ return (
 <p className="font-black text-legacy-ink">{client.name}</p>
 <p className="text-sm text-legacy-muted">{client.email}</p>
 <button onClick={() => openTimeline(client.id)} className="mt-1 text-xs font-bold text-legacy-purple underline">View timeline</button>
+<button onClick={() => openProfile(client.id)} className="mt-1 ml-3 text-xs font-bold text-legacy-purple underline">View profile</button>
 </td>
 <td>
 <div className="grid gap-2">
@@ -1888,6 +2066,94 @@ className="rounded-lg border border-legacy-silver px-3 py-2 text-sm font-bold te
 </div>
 </section>
 ) : null}
+{profileClientId && (
+  <section className="soft-panel mt-5 grid gap-5 p-5 lg:grid-cols-2">
+    <div className="lg:col-span-2 mb-1 flex items-center justify-between">
+      <h2 className="text-xl font-black text-legacy-ink">Client profile</h2>
+      <button onClick={closeProfile} className="rounded-lg border border-legacy-silver px-3 py-2 text-sm font-bold text-legacy-ink">Close</button>
+    </div>
+    {profileLoading && <p className="text-sm text-legacy-muted">Loading profile...</p>}
+    {!profileLoading && profileInfo && (
+      <>
+        <div className="grid gap-3">
+          <div className="rounded-xl border border-legacy-silver p-4">
+            <p className="font-black text-legacy-ink">{profileInfo.profiles?.full_name}</p>
+            <p className="text-sm text-legacy-muted">{profileInfo.profiles?.email}</p>
+            <p className="text-sm text-legacy-muted">{profileInfo.profiles?.phone}</p>
+            <p className="text-sm text-legacy-muted">{profileInfo.profiles?.address}</p>
+            <p className="mt-2 text-xs font-bold uppercase text-legacy-purple">
+              {profileInfo.status}{profileInfo.client_number ? " . " + profileInfo.client_number : ""}
+            </p>
+          </div>
+          <div className="rounded-xl border border-legacy-silver p-4">
+            <p className="mb-2 font-black text-legacy-ink">Notes</p>
+            <textarea
+              value={profileNotesDraft}
+              onChange={(event) => setProfileNotesDraft(event.target.value)}
+              className="w-full rounded-lg border border-legacy-silver px-3 py-3"
+              rows={5}
+              placeholder="Internal notes about this client..."
+            />
+            <button
+              onClick={saveProfileNotes}
+              disabled={savingNotes}
+              className="mt-2 rounded-lg bg-legacy-purple px-4 py-2 text-sm font-black text-white disabled:opacity-50"
+            >
+              {savingNotes ? "Saving..." : "Save notes"}
+            </button>
+          </div>
+          <div className="rounded-xl border border-legacy-silver p-4">
+            <p className="mb-2 font-black text-legacy-ink">Documents</p>
+            {profileDocs.length === 0 && <p className="text-sm text-legacy-muted">No documents yet.</p>}
+            <div className="grid gap-2">
+              {profileDocs.map((doc) => (
+                <div key={doc.id} className="flex items-center justify-between rounded-lg border border-legacy-silver px-3 py-2 text-sm">
+                  <span>{doc.name}</span>
+                  <span className="text-xs font-bold text-legacy-muted">
+                    {doc.status}{doc.visible_to_client ? "" : " . Hidden from client"}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="flex h-[28rem] flex-col rounded-xl border border-legacy-silver p-4">
+          <p className="mb-2 font-black text-legacy-ink">Message thread</p>
+          <div className="flex-1 space-y-3 overflow-auto">
+            {profileThread.length === 0 && <p className="text-sm text-legacy-muted">No messages yet.</p>}
+            {profileThread.map((message) => (
+              <div
+                key={message.id}
+                className={`max-w-[85%] rounded-2xl p-3 ${
+                  message.sender_id === profileUserId ? "ml-auto bg-legacy-purple text-white" : "bg-legacy-lavender text-legacy-ink"
+                }`}
+              >
+                <p className="leading-6">{message.body}</p>
+                <p
+                  className={`mt-1 text-xs font-bold ${
+                    message.sender_id === profileUserId ? "text-white/70" : "text-legacy-muted"
+                  }`}
+                >
+                  {new Date(message.created_at).toLocaleString()}
+                </p>
+              </div>
+            ))}
+          </div>
+          <form onSubmit={sendProfileMessage} className="mt-3 flex gap-2 border-t border-legacy-silver pt-3">
+            <input
+              value={profileMessageText}
+              onChange={(event) => setProfileMessageText(event.target.value)}
+              className="min-w-0 flex-1 rounded-lg border border-legacy-silver px-3 py-2"
+              placeholder="Write a message..."
+              required
+            />
+            <button className="rounded-lg bg-legacy-purple px-4 py-2 text-sm font-black text-white">Send</button>
+          </form>
+        </div>
+      </>
+    )}
+  </section>
+)}
 </>
 );
 }
@@ -2443,20 +2709,318 @@ className="inline-flex items-center gap-2 rounded-lg border border-legacy-silver
 }
 
 function AdminMessages() {
-return (
-<>
-<PageHeader eyebrow="Admin" title="Send messages" description="Send updates, document requests, and service notes to clients." />
-<section className="soft-panel grid gap-4 p-5">
-<select className="rounded-lg border border-legacy-silver px-3 py-3">
-{clients.map((client) => <option key={client.id}>{client.name}</option>)}
-</select>
-<textarea className="rounded-lg border border-legacy-silver px-3 py-3" rows={6} placeholder="Write a clear message..." />
-<button className="inline-flex w-fit items-center gap-2 rounded-lg bg-legacy-purple px-5 py-3 font-black text-white">
-<Send size={18} /> Send message
-</button>
-</section>
-</>
-);
+  const [clientsList, setClientsList] = useState<{ id: string; name: string }[]>([]);
+  const [selectedClient, setSelectedClient] = useState("");
+  const [thread, setThread] = useState<{ id: string; body: string; sender_id: string; created_at: string }[]>([]);
+  const [messageText, setMessageText] = useState("");
+  const [userId, setUserId] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
+
+  useEffect(() => {
+    const supabase = supabaseBrowser();
+    if (!supabase) return;
+    let active = true;
+    async function load() {
+      const { data: userData } = await supabase.auth.getUser();
+      if (active) setUserId(userData.user?.id || null);
+      const { data } = await supabase
+        .from("clients")
+        .select("id, profiles(full_name)")
+        .order("created_at", { ascending: true });
+      const rows = (data || []) as any[];
+      const mapped = rows.map((row) => ({
+        id: row.id,
+        name: row.profiles?.full_name || "Unnamed client"
+      }));
+      if (active) {
+        setClientsList(mapped);
+        setSelectedClient((current) => current || (mapped[0] ? mapped[0].id : ""));
+      }
+    }
+    load();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!selectedClient) {
+      setThread([]);
+      return;
+    }
+    const supabase = supabaseBrowser();
+    if (!supabase) return;
+    let active = true;
+    async function loadThread() {
+      const { data } = await supabase
+        .from("messages")
+        .select("id, body, sender_id, created_at")
+        .eq("client_id", selectedClient)
+        .order("created_at", { ascending: true });
+      if (active) setThread(data || []);
+    }
+    loadThread();
+    const channel = supabase
+      .channel(`admin-messages-${selectedClient}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "messages", filter: `client_id=eq.${selectedClient}` },
+        () => loadThread()
+      )
+      .subscribe();
+    return () => {
+      active = false;
+      supabase.removeChannel(channel);
+    };
+  }, [selectedClient]);
+
+  async function sendMessage(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedClient || !messageText.trim() || !userId) return;
+    const supabase = supabaseBrowser();
+    if (!supabase) return;
+    setSending(true);
+    await supabase.from("messages").insert({
+      client_id: selectedClient,
+      sender_id: userId,
+      body: messageText.trim()
+    });
+    setMessageText("");
+    const { data } = await supabase
+      .from("messages")
+      .select("id, body, sender_id, created_at")
+      .eq("client_id", selectedClient)
+      .order("created_at", { ascending: true });
+    setThread(data || []);
+    setSending(false);
+  }
+
+  return (
+    <>
+      <PageHeader
+        eyebrow="Admin"
+        title="Send messages"
+        description="Send updates, document requests, and service notes to clients. Each client has their own private thread."
+      />
+      <section className="soft-panel grid gap-4 p-5">
+        <select
+          value={selectedClient}
+          onChange={(event) => setSelectedClient(event.target.value)}
+          className="rounded-lg border border-legacy-silver px-3 py-3"
+        >
+          {clientsList.map((client) => (
+            <option key={client.id} value={client.id}>
+              {client.name}
+            </option>
+          ))}
+        </select>
+
+        <div className="flex h-80 flex-col gap-3 overflow-auto rounded-lg border border-legacy-silver p-4">
+          {thread.length === 0 && <p className="text-sm text-legacy-muted">No messages with this client yet.</p>}
+          {thread.map((message) => (
+            <div
+              key={message.id}
+              className={`max-w-[82%] rounded-2xl p-3 ${
+                message.sender_id === userId ? "ml-auto bg-legacy-purple text-white" : "bg-legacy-lavender text-legacy-ink"
+              }`}
+            >
+              <p className="leading-6">{message.body}</p>
+              <p className={`mt-1 text-xs font-bold ${message.sender_id === userId ? "text-white/70" : "text-legacy-muted"}`}>
+                {new Date(message.created_at).toLocaleString()}
+              </p>
+            </div>
+          ))}
+        </div>
+
+        <form onSubmit={sendMessage} className="grid gap-3">
+          <textarea
+            value={messageText}
+            onChange={(event) => setMessageText(event.target.value)}
+            className="rounded-lg border border-legacy-silver px-3 py-3"
+            rows={4}
+            placeholder="Write a clear message..."
+            required
+          />
+          <button
+            disabled={sending}
+            className="inline-flex w-fit items-center gap-2 rounded-lg bg-legacy-purple px-5 py-3 font-black text-white disabled:opacity-50"
+          >
+            <Send size={18} /> Send message
+          </button>
+        </form>
+      </section>
+    </>
+  );
+}
+
+function AdminScheduling() {
+  const [clientsList, setClientsList] = useState<{ id: string; name: string }[]>([]);
+  const [selectedClient, setSelectedClient] = useState("");
+  const [title, setTitle] = useState("");
+  const [startsAt, setStartsAt] = useState("");
+  const [endsAt, setEndsAt] = useState("");
+  const [meetingUrl, setMeetingUrl] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [feedback, setFeedback] = useState("");
+  const [appointmentsList, setAppointmentsList] = useState<any[]>([]);
+
+  useEffect(() => {
+    const supabase = supabaseBrowser();
+    if (!supabase) return;
+    let active = true;
+    async function load() {
+      const { data } = await supabase.from("clients").select("id, profiles(full_name)");
+      const rows = (data || []) as any[];
+      const mapped = rows.map((row) => ({ id: row.id, name: row.profiles?.full_name || "Unnamed client" }));
+      if (active) {
+        setClientsList(mapped);
+        setSelectedClient((current) => current || (mapped[0] ? mapped[0].id : ""));
+      }
+    }
+    load();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  async function loadAppointments() {
+    const supabase = supabaseBrowser();
+    if (!supabase) return;
+    const { data } = await supabase
+      .from("appointments")
+      .select("id, title, starts_at, ends_at, status, meeting_url, client_id, clients(profiles(full_name))")
+      .order("starts_at", { ascending: true });
+    setAppointmentsList(data || []);
+  }
+
+  useEffect(() => {
+    loadAppointments();
+  }, []);
+
+  async function createAppointment(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedClient || !title.trim() || !startsAt) return;
+    const supabase = supabaseBrowser();
+    if (!supabase) return;
+    setSaving(true);
+    await supabase.from("appointments").insert({
+      client_id: selectedClient,
+      title: title.trim(),
+      starts_at: new Date(startsAt).toISOString(),
+      ends_at: endsAt ? new Date(endsAt).toISOString() : null,
+      meeting_url: meetingUrl || null,
+      status: "Upcoming"
+    });
+    setTitle("");
+    setStartsAt("");
+    setEndsAt("");
+    setMeetingUrl("");
+    setFeedback("Appointment scheduled.");
+    setSaving(false);
+    loadAppointments();
+  }
+
+  async function updateStatus(id: string, status: string) {
+    const supabase = supabaseBrowser();
+    if (!supabase) return;
+    await supabase.from("appointments").update({ status }).eq("id", id);
+    loadAppointments();
+  }
+
+  async function removeAppointment(id: string) {
+    const supabase = supabaseBrowser();
+    if (!supabase) return;
+    await supabase.from("appointments").delete().eq("id", id);
+    loadAppointments();
+  }
+
+  return (
+    <>
+      <PageHeader eyebrow="Admin" title="Scheduling" description="Create and manage client appointments." />
+      <section className="grid gap-5 lg:grid-cols-[22rem_1fr]">
+        <form onSubmit={createAppointment} className="soft-panel grid content-start gap-3 p-5">
+          <h2 className="text-lg font-black text-legacy-ink">New appointment</h2>
+          <select
+            value={selectedClient}
+            onChange={(event) => setSelectedClient(event.target.value)}
+            className="rounded-lg border border-legacy-silver px-3 py-3"
+          >
+            {clientsList.map((client) => (
+              <option key={client.id} value={client.id}>
+                {client.name}
+              </option>
+            ))}
+          </select>
+          <input
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            className="rounded-lg border border-legacy-silver px-3 py-3"
+            placeholder="Appointment title"
+            required
+          />
+          <label className="text-xs font-bold text-legacy-muted">Start</label>
+          <input
+            type="datetime-local"
+            value={startsAt}
+            onChange={(event) => setStartsAt(event.target.value)}
+            className="rounded-lg border border-legacy-silver px-3 py-3"
+            required
+          />
+          <label className="text-xs font-bold text-legacy-muted">End (optional)</label>
+          <input
+            type="datetime-local"
+            value={endsAt}
+            onChange={(event) => setEndsAt(event.target.value)}
+            className="rounded-lg border border-legacy-silver px-3 py-3"
+          />
+          <input
+            value={meetingUrl}
+            onChange={(event) => setMeetingUrl(event.target.value)}
+            className="rounded-lg border border-legacy-silver px-3 py-3"
+            placeholder="Meeting link (optional)"
+          />
+          <button
+            disabled={saving}
+            className="rounded-lg bg-legacy-purple px-5 py-3 font-black text-white disabled:opacity-50"
+          >
+            {saving ? "Saving..." : "Schedule appointment"}
+          </button>
+          {feedback && <p className="text-xs text-legacy-muted">{feedback}</p>}
+        </form>
+
+        <div className="soft-panel p-5">
+          <h2 className="mb-3 text-lg font-black text-legacy-ink">Upcoming and past appointments</h2>
+          <div className="grid gap-3">
+            {appointmentsList.length === 0 && <p className="text-sm text-legacy-muted">No appointments scheduled yet.</p>}
+            {appointmentsList.map((appt) => (
+              <div key={appt.id} className="rounded-xl border border-legacy-silver p-4">
+                <p className="font-black text-legacy-ink">{appt.title}</p>
+                <p className="text-sm text-legacy-muted">{appt.clients?.profiles?.full_name}</p>
+                <p className="text-sm text-legacy-muted">{new Date(appt.starts_at).toLocaleString()}</p>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <span className="rounded-full bg-legacy-lavender px-3 py-1 text-xs font-bold text-legacy-plum">
+                    {appt.status}
+                  </span>
+                  <select
+                    value={appt.status}
+                    onChange={(event) => updateStatus(appt.id, event.target.value)}
+                    className="rounded-lg border border-legacy-silver px-2 py-1 text-xs"
+                  >
+                    <option>Upcoming</option>
+                    <option>Completed</option>
+                    <option>Cancelled</option>
+                  </select>
+                  <button onClick={() => removeAppointment(appt.id)} className="text-xs font-bold text-red-600 underline">
+                    Delete
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+    </>
+  );
 }
 
 function AdminBilling() {
