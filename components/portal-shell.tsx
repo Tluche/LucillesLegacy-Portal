@@ -51,6 +51,7 @@ const adminItems: NavItem[] = [
 { id: "admin-documents", label: "Documents", icon: FolderUp },
 { id: "admin-resources", label: "Resources", icon: FileText },
 { id: "admin-messages", label: "Messages", icon: MessageSquare },
+  { id: "admin-scheduling", label: "Scheduling", icon: CalendarDays },
 { id: "admin-billing", label: "Billing & Payments", icon: CreditCard }
 ];
 
