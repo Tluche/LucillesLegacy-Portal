@@ -284,6 +284,7 @@ function Messages({ clientId }: { clientId: string | null }) {
     let active = true;
 
     async function load() {
+      if (!supabase) return;
       const { data: userData } = await supabase.auth.getUser();
       if (active) setUserId(userData.user?.id || null);
       const { data } = await supabase
@@ -2721,6 +2722,7 @@ function AdminMessages() {
     if (!supabase) return;
     let active = true;
     async function load() {
+      if (!supabase) return;
       const { data: userData } = await supabase.auth.getUser();
       if (active) setUserId(userData.user?.id || null);
       const { data } = await supabase
@@ -2752,6 +2754,7 @@ function AdminMessages() {
     if (!supabase) return;
     let active = true;
     async function loadThread() {
+      if (!supabase) return;
       const { data } = await supabase
         .from("messages")
         .select("id, body, sender_id, created_at")
@@ -2869,6 +2872,7 @@ function AdminScheduling() {
     if (!supabase) return;
     let active = true;
     async function load() {
+      if (!supabase) return;
       const { data } = await supabase.from("clients").select("id, profiles(full_name)");
       const rows = (data || []) as any[];
       const mapped = rows.map((row) => ({ id: row.id, name: row.profiles?.full_name || "Unnamed client" }));
