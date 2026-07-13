@@ -2214,90 +2214,108 @@ loadFilters();
 }, []);
 
 async function uploadDocument(event: React.FormEvent<HTMLFormElement>) {
-event.preventDefault();
-setUploadError("");
-setUploadNotice("");
-const form = event.currentTarget;
-const formData = new FormData(form);
-const clientId = String(formData.get("clientId") || "");
-const name = String(formData.get("name") || "");
-const category = String(formData.get("category") || UPLOAD_CATEGORIES[0]);
-const serviceSlug = String(formData.get("serviceSlug") || "");
-const internalNotes = String(formData.get("internalNotes") || "");
-const taxYear = String(formData.get("taxYear") || "");
-const visibleToClient = formData.get("visibleToClient") === "on";
-const notifyClient = formData.get("notifyClient") === "on";
-const file = formData.get("file") as File | null;
+    event.preventDefault();
+    setUploadError('');
+    setUploadNotice('');
+    const form = event.currentTarget;
+    const formData = new FormData(form);
+    const clientId = String(formData.get('clientId') || '');
+    const name = String(formData.get('name') || '');
+    const category = String(formData.get('category') || UPLOAD_CATEGORIES[0]);
+    const serviceSlug = String(formData.get('serviceSlug') || '');
+    const internalNotes = String(formData.get('internalNotes') || '');
+    const taxYear = String(formData.get('taxYear') || '');
+    const visibleToClient = formData.get('visibleToClient') === 'on';
+    const notifyClient = formData.get('notifyClient') === 'on';
+    const file = formData.get('file') as File | null;
 
-if (!clientId || !name || !file?.name) {
-setUploadError("Please choose a client, document name, and file.");
-return;
-}
+    if (!clientId || !name || !file?.name) {
+      setUploadError('Please choose a client, document name, and file.');
+      return;
+    }
 
-const supabase = supabaseBrowser();
-if (!supabase) {
-setUploadError("Document upload is currently unavailable.");
-return;
-}
+    const supabase = supabaseBrowser();
+    if (!supabase) {
+      setUploadError('Document upload is currently unavailable.');
+      return;
+    }
 
-setUploading(true);
+    setUploading(true);
 
-const folder = CATEGORY_TO_FOLDER[category] || "Resources";
-const documentCategory = serviceSlug ? (SERVICE_SLUG_TO_DOCUMENT_CATEGORY[serviceSlug] || "General") : "General";
-const path = clientId + "/" + folder + "/" + Date.now() + "-" + file.name;
+    const folder = CATEGORY_TO_FOLDER[category] || 'Resources';
+    const documentCategory = serviceSlug ? (SERVICE_SLUG_TO_DOCUMENT_CATEGORY[serviceSlug] || 'General') : 'General';
+    const userResult = await supabase.auth.getUser();
+    const adminUserId = userResult.data.user?.id || null;
 
-const uploadResult = await supabase.storage.from("CLIENT DOCUMENTS").upload(path, file);
-if (uploadResult.error) {
-setUploadError(uploadResult.error.message);
-setUploading(false);
-return;
-}
+    const targetClientIds = clientId === '__ALL__' ? allClients.map((c) => c.id) : [clientId];
+    if (targetClientIds.length === 0) {
+      setUploadError('No clients found to upload to.');
+      setUploading(false);
+      return;
+    }
 
-const userResult = await supabase.auth.getUser();
-const adminUserId = userResult.data.user?.id || null;
+    let successCount = 0;
+    let lastError = '';
 
-const insertResult = await supabase.from("documents").insert({
-client_id: clientId,
-uploaded_by: adminUserId,
-name,
-storage_path: path,
-category: documentCategory,
-status: "Filed",
-folder,
-visible_to_client: visibleToClient,
-internal_notes: internalNotes || null,
-service_slug: serviceSlug || null,
-tax_year: taxYear ? Number(taxYear) : null
-});
+    for (const targetClientId of targetClientIds) {
+      const path = targetClientId + '/' + folder + '/' + Date.now() + '-' + file.name;
+      const uploadResult = await supabase.storage.from('CLIENT DOCUMENTS').upload(path, file);
+      if (uploadResult.error) {
+        lastError = uploadResult.error.message;
+        continue;
+      }
 
-if (insertResult.error) {
-setUploadError(insertResult.error.message);
-setUploading(false);
-return;
-}
+      const insertResult = await supabase.from('documents').insert({
+        client_id: targetClientId,
+        uploaded_by: adminUserId,
+        name,
+        storage_path: path,
+        category: documentCategory,
+        status: 'Filed',
+        folder,
+        visible_to_client: visibleToClient,
+        internal_notes: internalNotes || null,
+        service_slug: serviceSlug || null,
+        tax_year: taxYear ? Number(taxYear) : null
+      });
 
-await supabase.from("client_timeline").insert({
-client_id: clientId,
-event_type: "document_uploaded",
-title: "Document uploaded: " + name,
-description: name + " was added to the document vault by Tia.",
-metadata: { document_name: name }
-});
+      if (insertResult.error) {
+        lastError = insertResult.error.message;
+        continue;
+      }
 
-if (notifyClient) {
-await supabase.from("notifications").insert({
-client_id: clientId,
-title: "New document uploaded",
-body: name + " has been added to your document vault.",
-kind: "new_document"
-});
-}
+      successCount++;
 
-form.reset();
-setUploading(false);
-setUploadNotice(notifyClient ? "Document uploaded and client notified." : "Document uploaded.");
-await loadDocuments();
-}
+      await supabase.from('client_timeline').insert({
+        client_id: targetClientId,
+        event_type: 'document_uploaded',
+        title: 'Document uploaded: ' + name,
+        description: name + ' was added to the document vault by Tia.',
+        metadata: { document_name: name }
+      });
+
+      if (notifyClient) {
+        await supabase.from('notifications').insert({
+          client_id: targetClientId,
+          title: 'New document uploaded',
+          body: name + ' has been added to your document vault.',
+          kind: 'new_document'
+        });
+      }
+    }
+
+    form.reset();
+    setUploading(false);
+
+    if (successCount === 0) {
+      setUploadError(lastError || 'Upload failed.');
+    } else if (targetClientIds.length > 1) {
+      setUploadNotice('Uploaded to ' + successCount + ' of ' + targetClientIds.length + ' clients.' + (notifyClient ? ' Clients notified.' : ''));
+    } else {
+      setUploadNotice(notifyClient ? 'Document uploaded and client notified.' : 'Document uploaded.');
+    }
+    await loadDocuments();
+  }
 
 async function viewDocument(storagePath: string) {
 if (!storagePath) return;
@@ -2392,6 +2410,7 @@ description="Upload documents directly into a client's vault, then file, rename,
 <h2 className="text-xl font-black text-legacy-ink">Upload document</h2>
 <select name="clientId" className="rounded-lg border border-legacy-silver px-3 py-3" defaultValue="">
 <option value="" disabled>Choose a client…</option>
+<option value="__ALL__">All clients (bulk upload)</option>
 {allClients.map((client) => (
 <option key={client.id} value={client.id}>{client.name}</option>
 ))}
