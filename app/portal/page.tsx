@@ -787,6 +787,17 @@ function ServiceStatus({ clientId }: { clientId: string | null }) {
   const [loadingServices, setLoadingServices] = useState(true);
   const [requesting, setRequesting] = useState<string | null>(null);
   const [requestError, setRequestError] = useState("");
+  const [dependents, setDependents] = useState<any[]>([]);
+  const [beneficiaries, setBeneficiaries] = useState<any[]>([]);
+  const [newDependentName, setNewDependentName] = useState("");
+  const [newDependentDob, setNewDependentDob] = useState("");
+  const [newDependentRelationship, setNewDependentRelationship] = useState("");
+  const [savingDependent, setSavingDependent] = useState(false);
+  const [newBeneficiaryName, setNewBeneficiaryName] = useState("");
+  const [newBeneficiaryRelationship, setNewBeneficiaryRelationship] = useState("");
+  const [newBeneficiaryPercentage, setNewBeneficiaryPercentage] = useState("");
+  const [newBeneficiaryContact, setNewBeneficiaryContact] = useState("");
+  const [savingBeneficiary, setSavingBeneficiary] = useState(false);
 
   async function loadServices() {
     const supabase = supabaseBrowser();
@@ -795,13 +806,15 @@ function ServiceStatus({ clientId }: { clientId: string | null }) {
       return;
     }
 
-    const [enrolledResult, allServicesResult, requestsResult] = await Promise.all([
+    const [enrolledResult, allServicesResult, requestsResult, dependentsResult, beneficiariesResult] = await Promise.all([
       supabase
       .from("client_services")
       .select("id, current_stage, progress, admin_notes, next_step, last_updated, services(id, slug, name, stages)")
       .eq("client_id", clientId),
       supabase.from("services").select("id, slug, name, stages"),
-      supabase.from("service_requests").select("service_id, status").eq("client_id", clientId)
+      supabase.from("service_requests").select("service_id, status").eq("client_id", clientId),
+      supabase.from("dependents").select("id, full_name, date_of_birth, relationship, created_at").eq("client_id", clientId).order("created_at", { ascending: true }),
+      supabase.from("beneficiaries").select("id, full_name, relationship, allocation_percentage, contact_info, created_at").eq("client_id", clientId).order("created_at", { ascending: true })
       ]);
 
     const enrolledRows: any[] = enrolledResult.data || [];
@@ -814,6 +827,8 @@ function ServiceStatus({ clientId }: { clientId: string | null }) {
     const enrolledServiceIds = enrolledRows.map((row: any) => row.services?.id);
     setAvailable(allServiceRows.filter((service: any) => !enrolledServiceIds.includes(service.id)));
 
+    setDependents(dependentsResult.data || []);
+    setBeneficiaries(beneficiariesResult.data || []);
     setLoadingServices(false);
   }
 
@@ -843,6 +858,80 @@ function ServiceStatus({ clientId }: { clientId: string | null }) {
     await loadServices();
   }
 
+
+  async function addDependentEntry() {
+    if (!clientId || !newDependentName.trim()) return;
+    const supabase = supabaseBrowser();
+    if (!supabase) return;
+    setSavingDependent(true);
+    await supabase.from("dependents").insert({
+      client_id: clientId,
+      full_name: newDependentName.trim(),
+      date_of_birth: newDependentDob || null,
+      relationship: newDependentRelationship.trim() || null
+    });
+    setNewDependentName("");
+    setNewDependentDob("");
+    setNewDependentRelationship("");
+    const { data } = await supabase
+      .from("dependents")
+      .select("id, full_name, date_of_birth, relationship, created_at")
+      .eq("client_id", clientId)
+      .order("created_at", { ascending: true });
+    setDependents(data || []);
+    setSavingDependent(false);
+  }
+
+  async function removeDependentEntry(id: string) {
+    if (!clientId) return;
+    const supabase = supabaseBrowser();
+    if (!supabase) return;
+    await supabase.from("dependents").delete().eq("id", id);
+    const { data } = await supabase
+      .from("dependents")
+      .select("id, full_name, date_of_birth, relationship, created_at")
+      .eq("client_id", clientId)
+      .order("created_at", { ascending: true });
+    setDependents(data || []);
+  }
+
+  async function addBeneficiaryEntry() {
+    if (!clientId || !newBeneficiaryName.trim()) return;
+    const supabase = supabaseBrowser();
+    if (!supabase) return;
+    setSavingBeneficiary(true);
+    await supabase.from("beneficiaries").insert({
+      client_id: clientId,
+      full_name: newBeneficiaryName.trim(),
+      relationship: newBeneficiaryRelationship.trim() || null,
+      allocation_percentage: newBeneficiaryPercentage ? Number(newBeneficiaryPercentage) : null,
+      contact_info: newBeneficiaryContact.trim() || null
+    });
+    setNewBeneficiaryName("");
+    setNewBeneficiaryRelationship("");
+    setNewBeneficiaryPercentage("");
+    setNewBeneficiaryContact("");
+    const { data } = await supabase
+      .from("beneficiaries")
+      .select("id, full_name, relationship, allocation_percentage, contact_info, created_at")
+      .eq("client_id", clientId)
+      .order("created_at", { ascending: true });
+    setBeneficiaries(data || []);
+    setSavingBeneficiary(false);
+  }
+
+  async function removeBeneficiaryEntry(id: string) {
+    if (!clientId) return;
+    const supabase = supabaseBrowser();
+    if (!supabase) return;
+    await supabase.from("beneficiaries").delete().eq("id", id);
+    const { data } = await supabase
+      .from("beneficiaries")
+      .select("id, full_name, relationship, allocation_percentage, contact_info, created_at")
+      .eq("client_id", clientId)
+      .order("created_at", { ascending: true });
+    setBeneficiaries(data || []);
+  }
   return (
     <>
     <PageHeader
@@ -892,6 +981,105 @@ function ServiceStatus({ clientId }: { clientId: string | null }) {
         <p className="mt-2 leading-7 text-legacy-muted">{row.next_step || "We'll update this soon."}</p>
         </div>
         </div>
+        {service?.slug === "tax" && (
+          <div className="mt-5 rounded-xl border border-legacy-silver p-4">
+            <p className="mb-2 font-black text-legacy-ink">Dependents</p>
+            {dependents.length === 0 && <p className="text-sm text-legacy-muted">No dependents added yet.</p>}
+            <div className="grid gap-2">
+              {dependents.map((dep) => (
+                <div key={dep.id} className="flex items-center justify-between rounded-lg border border-legacy-silver px-3 py-2 text-sm">
+                  <span>
+                    {dep.full_name}
+                    {dep.relationship ? ` • ${dep.relationship}` : ""}
+                    {dep.date_of_birth ? ` • ${dep.date_of_birth}` : ""}
+                  </span>
+                  <button onClick={() => removeDependentEntry(dep.id)} className="text-xs font-bold text-red-600 underline">Remove</button>
+                </div>
+              ))}
+            </div>
+            <div className="mt-3 grid gap-2 md:grid-cols-2">
+              <input
+                value={newDependentName}
+                onChange={(event) => setNewDependentName(event.target.value)}
+                className="rounded-lg border border-legacy-silver px-3 py-2 text-sm"
+                placeholder="Dependent full name"
+              />
+              <input
+                value={newDependentDob}
+                onChange={(event) => setNewDependentDob(event.target.value)}
+                type="date"
+                className="rounded-lg border border-legacy-silver px-3 py-2 text-sm"
+              />
+              <input
+                value={newDependentRelationship}
+                onChange={(event) => setNewDependentRelationship(event.target.value)}
+                className="rounded-lg border border-legacy-silver px-3 py-2 text-sm"
+                placeholder="Relationship (e.g. Child, Parent)"
+              />
+              <button
+                onClick={addDependentEntry}
+                disabled={savingDependent}
+                className="rounded-lg bg-legacy-purple px-4 py-2 text-sm font-black text-white disabled:opacity-50"
+              >
+                {savingDependent ? "Adding..." : "+ Add dependent"}
+              </button>
+            </div>
+          </div>
+        )}
+        {service?.slug === "life-insurance" && (
+          <div className="mt-5 rounded-xl border border-legacy-silver p-4">
+            <p className="mb-2 font-black text-legacy-ink">Beneficiaries</p>
+            {beneficiaries.length === 0 && <p className="text-sm text-legacy-muted">No beneficiaries added yet.</p>}
+            <div className="grid gap-2">
+              {beneficiaries.map((ben) => (
+                <div key={ben.id} className="flex items-center justify-between rounded-lg border border-legacy-silver px-3 py-2 text-sm">
+                  <span>
+                    {ben.full_name}
+                    {ben.relationship ? ` • ${ben.relationship}` : ""}
+                    {(ben.allocation_percentage !== null && ben.allocation_percentage !== undefined) ? ` • ${ben.allocation_percentage}%` : ""}
+                  </span>
+                  <button onClick={() => removeBeneficiaryEntry(ben.id)} className="text-xs font-bold text-red-600 underline">Remove</button>
+                </div>
+              ))}
+            </div>
+            <div className="mt-3 grid gap-2 md:grid-cols-2">
+              <input
+                value={newBeneficiaryName}
+                onChange={(event) => setNewBeneficiaryName(event.target.value)}
+                className="rounded-lg border border-legacy-silver px-3 py-2 text-sm"
+                placeholder="Beneficiary full name"
+              />
+              <input
+                value={newBeneficiaryRelationship}
+                onChange={(event) => setNewBeneficiaryRelationship(event.target.value)}
+                className="rounded-lg border border-legacy-silver px-3 py-2 text-sm"
+                placeholder="Relationship (e.g. Spouse, Child)"
+              />
+              <input
+                value={newBeneficiaryPercentage}
+                onChange={(event) => setNewBeneficiaryPercentage(event.target.value)}
+                type="number"
+                min="0"
+                max="100"
+                className="rounded-lg border border-legacy-silver px-3 py-2 text-sm"
+                placeholder="Allocation %"
+              />
+              <input
+                value={newBeneficiaryContact}
+                onChange={(event) => setNewBeneficiaryContact(event.target.value)}
+                className="rounded-lg border border-legacy-silver px-3 py-2 text-sm"
+                placeholder="Contact phone or email"
+              />
+              <button
+                onClick={addBeneficiaryEntry}
+                disabled={savingBeneficiary}
+                className="rounded-lg bg-legacy-purple px-4 py-2 text-sm font-black text-white disabled:opacity-50"
+              >
+                {savingBeneficiary ? "Adding..." : "+ Add beneficiary"}
+              </button>
+            </div>
+          </div>
+        )}
         </article>
         );
     })}
@@ -1661,6 +1849,17 @@ const [profileMessageText, setProfileMessageText] = useState("");
 const [profileNotesDraft, setProfileNotesDraft] = useState("");
 const [savingNotes, setSavingNotes] = useState(false);
 const [profileUserId, setProfileUserId] = useState<string | null>(null);
+const [profileDependents, setProfileDependents] = useState<any[]>([]);
+const [newDependentName, setNewDependentName] = useState("");
+const [newDependentDob, setNewDependentDob] = useState("");
+const [newDependentRelationship, setNewDependentRelationship] = useState("");
+const [savingDependent, setSavingDependent] = useState(false);
+const [profileBeneficiaries, setProfileBeneficiaries] = useState<any[]>([]);
+const [newBeneficiaryName, setNewBeneficiaryName] = useState("");
+const [newBeneficiaryRelationship, setNewBeneficiaryRelationship] = useState("");
+const [newBeneficiaryPercentage, setNewBeneficiaryPercentage] = useState("");
+const [newBeneficiaryContact, setNewBeneficiaryContact] = useState("");
+const [savingBeneficiary, setSavingBeneficiary] = useState(false);
 
 async function loadServices() {
 const supabase = supabaseBrowser();
@@ -1790,7 +1989,7 @@ async function openProfile(clientId: string) {
   setProfileLoading(true);
   const { data: userData } = await supabase.auth.getUser();
   setProfileUserId(userData.user?.id || null);
-  const [profileResult, docsResult, threadResult] = await Promise.all([
+    const [profileResult, docsResult, threadResult, dependentsResult, beneficiariesResult] = await Promise.all([
     supabase
       .from("clients")
       .select("id, status, client_number, client_notes, profiles(full_name, email, phone, address, emergency_contact, preferred_contact)")
@@ -1805,12 +2004,24 @@ async function openProfile(clientId: string) {
       .from("messages")
       .select("id, body, sender_id, created_at")
       .eq("client_id", clientId)
-      .order("created_at", { ascending: true })
+      .order("created_at", { ascending: true }),
+      supabase
+        .from("dependents")
+        .select("id, full_name, date_of_birth, relationship, ssn_last4, created_at")
+        .eq("client_id", clientId)
+        .order("created_at", { ascending: true }),
+      supabase
+        .from("beneficiaries")
+        .select("id, full_name, relationship, allocation_percentage, contact_info, created_at")
+        .eq("client_id", clientId)
+        .order("created_at", { ascending: true })
   ]);
   setProfileInfo(profileResult.data);
   setProfileNotesDraft((profileResult.data as any)?.client_notes || "");
   setProfileDocs(docsResult.data || []);
   setProfileThread(threadResult.data || []);
+  setProfileDependents(dependentsResult.data || []);
+  setProfileBeneficiaries(beneficiariesResult.data || []);
   setProfileLoading(false);
 }
 
@@ -1820,6 +2031,15 @@ function closeProfile() {
   setProfileDocs([]);
   setProfileThread([]);
   setProfileNotesDraft("");
+  setProfileDependents([]);
+  setProfileBeneficiaries([]);
+  setNewDependentName("");
+  setNewDependentDob("");
+  setNewDependentRelationship("");
+  setNewBeneficiaryName("");
+  setNewBeneficiaryRelationship("");
+  setNewBeneficiaryPercentage("");
+  setNewBeneficiaryContact("");
 }
 
 async function saveProfileNotes() {
@@ -1848,6 +2068,70 @@ async function sendProfileMessage(event: React.FormEvent<HTMLFormElement>) {
     .eq("client_id", profileClientId)
     .order("created_at", { ascending: true });
   setProfileThread(data || []);
+}
+
+async function addDependent() {
+  if (!profileClientId || !newDependentName.trim()) return;
+  const supabase = supabaseBrowser();
+  if (!supabase) return;
+  setSavingDependent(true);
+  await supabase.from("dependents").insert({
+    client_id: profileClientId,
+    full_name: newDependentName.trim(),
+    date_of_birth: newDependentDob || null,
+    relationship: newDependentRelationship.trim() || null
+  });
+  setNewDependentName("");
+  setNewDependentDob("");
+  setNewDependentRelationship("");
+  const { data } = await supabase
+    .from("dependents")
+    .select("id, full_name, date_of_birth, relationship, ssn_last4, created_at")
+    .eq("client_id", profileClientId)
+    .order("created_at", { ascending: true });
+  setProfileDependents(data || []);
+  setSavingDependent(false);
+}
+
+async function removeDependent(id: string) {
+  if (!profileClientId) return;
+  const supabase = supabaseBrowser();
+  if (!supabase) return;
+  await supabase.from("dependents").delete().eq("id", id);
+  setProfileDependents((prev) => prev.filter((row) => row.id !== id));
+}
+
+async function addBeneficiary() {
+  if (!profileClientId || !newBeneficiaryName.trim()) return;
+  const supabase = supabaseBrowser();
+  if (!supabase) return;
+  setSavingBeneficiary(true);
+  await supabase.from("beneficiaries").insert({
+    client_id: profileClientId,
+    full_name: newBeneficiaryName.trim(),
+    relationship: newBeneficiaryRelationship.trim() || null,
+    allocation_percentage: newBeneficiaryPercentage ? Number(newBeneficiaryPercentage) : null,
+    contact_info: newBeneficiaryContact.trim() || null
+  });
+  setNewBeneficiaryName("");
+  setNewBeneficiaryRelationship("");
+  setNewBeneficiaryPercentage("");
+  setNewBeneficiaryContact("");
+  const { data } = await supabase
+    .from("beneficiaries")
+    .select("id, full_name, relationship, allocation_percentage, contact_info, created_at")
+    .eq("client_id", profileClientId)
+    .order("created_at", { ascending: true });
+  setProfileBeneficiaries(data || []);
+  setSavingBeneficiary(false);
+}
+
+async function removeBeneficiary(id: string) {
+  if (!profileClientId) return;
+  const supabase = supabaseBrowser();
+  if (!supabase) return;
+  await supabase.from("beneficiaries").delete().eq("id", id);
+  setProfileBeneficiaries((prev) => prev.filter((row) => row.id !== id));
 }
 
 async function loadClients() {
@@ -2115,6 +2399,101 @@ className="rounded-lg border border-legacy-silver px-3 py-2 text-sm font-bold te
                   </span>
                 </div>
               ))}
+            </div>
+          </div>
+          <div className="rounded-xl border border-legacy-silver p-4">
+            <p className="mb-2 font-black text-legacy-ink">Tax — Dependents</p>
+            {profileDependents.length === 0 && <p className="text-sm text-legacy-muted">No dependents added yet.</p>}
+            <div className="grid gap-2">
+              {profileDependents.map((dep) => (
+                <div key={dep.id} className="flex items-center justify-between rounded-lg border border-legacy-silver px-3 py-2 text-sm">
+                  <span>
+                    {dep.full_name}
+                    {dep.relationship ? ` • ${dep.relationship}` : ""}
+                    {dep.date_of_birth ? ` • ${dep.date_of_birth}` : ""}
+                  </span>
+                  <button onClick={() => removeDependent(dep.id)} className="text-xs font-bold text-red-600 underline">Remove</button>
+                </div>
+              ))}
+            </div>
+            <div className="mt-3 grid gap-2">
+              <input
+                value={newDependentName}
+                onChange={(event) => setNewDependentName(event.target.value)}
+                className="rounded-lg border border-legacy-silver px-3 py-2 text-sm"
+                placeholder="Dependent full name"
+              />
+              <input
+                value={newDependentDob}
+                onChange={(event) => setNewDependentDob(event.target.value)}
+                type="date"
+                className="rounded-lg border border-legacy-silver px-3 py-2 text-sm"
+              />
+              <input
+                value={newDependentRelationship}
+                onChange={(event) => setNewDependentRelationship(event.target.value)}
+                className="rounded-lg border border-legacy-silver px-3 py-2 text-sm"
+                placeholder="Relationship (e.g. Child, Parent)"
+              />
+              <button
+                onClick={addDependent}
+                disabled={savingDependent}
+                className="rounded-lg bg-legacy-purple px-4 py-2 text-sm font-black text-white disabled:opacity-50"
+              >
+                {savingDependent ? "Adding..." : "+ Add dependent"}
+              </button>
+            </div>
+          </div>
+          <div className="rounded-xl border border-legacy-silver p-4">
+            <p className="mb-2 font-black text-legacy-ink">Life Insurance — Beneficiaries</p>
+            {profileBeneficiaries.length === 0 && <p className="text-sm text-legacy-muted">No beneficiaries added yet.</p>}
+            <div className="grid gap-2">
+              {profileBeneficiaries.map((ben) => (
+                <div key={ben.id} className="flex items-center justify-between rounded-lg border border-legacy-silver px-3 py-2 text-sm">
+                  <span>
+                    {ben.full_name}
+                    {ben.relationship ? ` • ${ben.relationship}` : ""}
+                    {(ben.allocation_percentage !== null && ben.allocation_percentage !== undefined) ? ` • ${ben.allocation_percentage}%` : ""}
+                  </span>
+                  <button onClick={() => removeBeneficiary(ben.id)} className="text-xs font-bold text-red-600 underline">Remove</button>
+                </div>
+              ))}
+            </div>
+            <div className="mt-3 grid gap-2">
+              <input
+                value={newBeneficiaryName}
+                onChange={(event) => setNewBeneficiaryName(event.target.value)}
+                className="rounded-lg border border-legacy-silver px-3 py-2 text-sm"
+                placeholder="Beneficiary full name"
+              />
+              <input
+                value={newBeneficiaryRelationship}
+                onChange={(event) => setNewBeneficiaryRelationship(event.target.value)}
+                className="rounded-lg border border-legacy-silver px-3 py-2 text-sm"
+                placeholder="Relationship (e.g. Spouse, Child)"
+              />
+              <input
+                value={newBeneficiaryPercentage}
+                onChange={(event) => setNewBeneficiaryPercentage(event.target.value)}
+                type="number"
+                min="0"
+                max="100"
+                className="rounded-lg border border-legacy-silver px-3 py-2 text-sm"
+                placeholder="Allocation %"
+              />
+              <input
+                value={newBeneficiaryContact}
+                onChange={(event) => setNewBeneficiaryContact(event.target.value)}
+                className="rounded-lg border border-legacy-silver px-3 py-2 text-sm"
+                placeholder="Contact phone or email"
+              />
+              <button
+                onClick={addBeneficiary}
+                disabled={savingBeneficiary}
+                className="rounded-lg bg-legacy-purple px-4 py-2 text-sm font-black text-white disabled:opacity-50"
+              >
+                {savingBeneficiary ? "Adding..." : "+ Add beneficiary"}
+              </button>
             </div>
           </div>
         </div>
