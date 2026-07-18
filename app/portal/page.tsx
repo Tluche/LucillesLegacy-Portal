@@ -572,7 +572,10 @@ async function viewDocument(storagePath: string) {
 const newTab = window.open("", "_blank");
 const supabase = supabaseBrowser();
 if (!supabase) { newTab?.close(); return; }
-const result = await supabase.storage.from("CLIENT DOCUMENTS").createSignedUrl(storagePath, 60);
+let result = await supabase.storage.from("CLIENT DOCUMENTS").createSignedUrl(storagePath, 60);
+  if (!result.data?.signedUrl) {
+    result = await supabase.storage.from("SIGNED DOCUMENTS").createSignedUrl(storagePath, 60);
+  }
 if (result.data?.signedUrl && newTab) {
 newTab.location.href = result.data.signedUrl;
 } else {
@@ -2701,7 +2704,10 @@ if (!storagePath) return;
 const newTab = window.open("", "_blank");
 const supabase = supabaseBrowser();
 if (!supabase) { newTab?.close(); return; }
-const result = await supabase.storage.from("CLIENT DOCUMENTS").createSignedUrl(storagePath, 60);
+let result = await supabase.storage.from("CLIENT DOCUMENTS").createSignedUrl(storagePath, 60);
+  if (!result.data?.signedUrl) {
+    result = await supabase.storage.from("SIGNED DOCUMENTS").createSignedUrl(storagePath, 60);
+  }
 if (result.data?.signedUrl && newTab) {
 newTab.location.href = result.data.signedUrl;
 } else {
