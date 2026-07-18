@@ -160,14 +160,14 @@ export async function createEnvelope(params: {
           anchorString: f.anchorString || "/sn1/",
           anchorUnits: "pixels",
           anchorXOffset: "0",
-          anchorYOffset: "0"
+          anchorYOffset: "-20"
     }));
 
   const configuredDateTabs = (params.signatureFields || []).filter((f) => f.type === "date");
     const dateSignedTabs = (configuredDateTabs.length > 0 ? configuredDateTabs : [{ anchorString: "/d1/" }]).map((f) => ({
           anchorString: f.anchorString || "/d1/",
           anchorUnits: "pixels",
-          anchorXOffset: "0",
+          anchorXOffset: "40",
           anchorYOffset: "0"
     }));
 
