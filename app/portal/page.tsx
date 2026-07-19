@@ -1752,119 +1752,140 @@ action={<button className="inline-flex items-center gap-2 rounded-lg bg-legacy-p
 );
 }
 function AdminLeads() {
-  const [leads, setLeads] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [busyId, setBusyId] = useState<string | null>(null);
-  const [error, setError] = useState("");
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+const [leads, setLeads] = useState<any[]>([]);
+const [loading, setLoading] = useState(true);
+const [busyId, setBusyId] = useState<string | null>(null);
+const [error, setError] = useState("");
+const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  async function loadLeads() {
-    const supabase = supabaseBrowser();
-    if (!supabase) { setLoading(false); return; }
-    const result = await supabase.from("leads").select("*").order("submitted_at", { ascending: false });
-    if (result.error) setError(result.error.message);
-    setLeads(result.data || []);
-    setLoading(false);
-  }
+async function loadLeads() {
+const supabase = supabaseBrowser();
+if (!supabase) { setLoading(false); return; }
+const result = await supabase.from("leads").select("*").order("submitted_at", { ascending: false });
+if (result.error) setError(result.error.message);
+setLeads(result.data || []);
+setLoading(false);
+}
 
-  useEffect(() => { loadLeads(); }, []);
+useEffect(() => { loadLeads(); }, []);
 
-  async function approve(leadId: string) {
-    setBusyId(leadId);
-    setError("");
-    const res = await fetch("/api/leads/approve", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ leadId })
-    });
-    const json = await res.json();
-    if (!res.ok) {
-      setError(json.error || "Something went wrong approving this lead.");
-    } else {
-      await loadLeads();
-    }
-    setBusyId(null);
-  }
+async function approve(leadId: string) {
+setBusyId(leadId);
+setError("");
+const res = await fetch("/api/leads/approve", {
+method: "POST",
+headers: { "Content-Type": "application/json" },
+body: JSON.stringify({ leadId })
+});
+const json = await res.json();
+if (!res.ok) {
+setError(json.error || "Something went wrong approving this lead.");
+} else {
+await loadLeads();
+}
+setBusyId(null);
+}
 
-  function toggleExpanded(leadId: string) {
-    setExpandedId((current) => (current === leadId ? null : leadId));
-  }
+function toggleExpanded(leadId: string) {
+setExpandedId((current) => (current === leadId ? null : leadId));
+}
 
-  function formatFieldLabel(key: string) {
-    return key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-  }
+function formatFieldLabel(key: string) {
+const spaced = key.replace(/_/g, " ").replace(/([a-z0-9])([A-Z])/g, "$1 $2");
+return spaced.replace(/\b\w/g, (c) => c.toUpperCase());
+}
 
-  function formatFieldValue(value: any): string {
-    if (value === null || value === undefined || value === "") return "—";
-    if (Array.isArray(value)) return value.length ? value.join(", ") : "—";
-    if (typeof value === "boolean") return value ? "Yes" : "No";
-    if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}T/.test(value)) {
-      const parsed = new Date(value);
-      return isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
-    }
-    if (typeof value === "object") return JSON.stringify(value);
-    return String(value);
-  }
+function formatFieldValue(value: any): string {
+if (value === null || value === undefined || value === "") return "—";
+if (Array.isArray(value)) return value.length ? value.join(", ") : "—";
+if (typeof value === "boolean") return value ? "Yes" : "No";
+if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}T/.test(value)) {
+const parsed = new Date(value);
+return isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
+}
+if (typeof value === "object") return JSON.stringify(value);
+return String(value);
+}
 
-  const LEAD_SUMMARY_KEYS = new Set(["id", "full_name", "email", "phone", "city", "state", "services_needed", "submitted_at", "status", "raw_payload"]);
+const LEAD_SUMMARY_KEYS = new Set(["id", "full_name", "email", "phone", "city", "state", "services_needed", "submitted_at", "status", "raw_payload"]);
+const RAW_PAYLOAD_SKIP_KEYS = new Set(["firstName", "lastName", "phoneNumber", "emailAddress", "city", "state", "preferredContactMethod", "bestTimeToReach", "howDidYouHearAboutUs", "servicesNeeded", "industry"]);
 
-  return (
-    <>
-      <PageHeader eyebrow="Admin" title="Leads" description="New intake form submissions. Approve a lead to create their client account and portal access." />
-      {error ? <p className="mb-4 rounded-lg bg-red-50 p-3 text-sm text-red-600">{error}</p> : null}
-      <section className="soft-panel p-5">
-        {loading ? (
-          <p className="text-legacy-muted">Loading leads...</p>
-        ) : leads.length === 0 ? (
-          <p className="text-legacy-muted">No leads yet.</p>
-        ) : (
-          <div className="grid gap-3">
-            {leads.map((lead) => (
-              <div key={lead.id} className="rounded-xl border border-legacy-silver p-4">
-                <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
-                  <div>
-                    <p className="font-black text-legacy-ink">{lead.full_name}</p>
-                    <p className="text-sm text-legacy-muted">{lead.email} • {lead.phone} • {lead.city}, {lead.state}</p>
-                    <p className="mt-2 text-xs text-legacy-muted">Services: {Array.isArray(lead.services_needed) ? lead.services_needed.join(", ") : "-"} • Submitted {new Date(lead.submitted_at).toLocaleString()}</p>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <StatusPill tone={lead.status === "Approved" ? "green" : "amber"}>{lead.status}</StatusPill>
-                    <button onClick={() => toggleExpanded(lead.id)} className="rounded-lg border border-legacy-silver px-4 py-2 text-sm font-black text-legacy-ink">
-                      {expandedId === lead.id ? "Hide full answers" : "View full answers"}
-                    </button>
-                    {lead.status !== "Approved" ? (
-                      <button onClick={() => approve(lead.id)} disabled={busyId === lead.id} className="rounded-lg bg-legacy-purple px-4 py-2 text-sm font-black text-white disabled:opacity-50">
-                        {busyId === lead.id ? "Approving..." : "Approve"}</button>
-                    ) : null}
-                  </div>
-                </div>
-                {expandedId === lead.id ? (
-                  <div className="mt-4 border-t border-legacy-silver pt-4">
-                    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                      {Object.keys(lead)
-                        .filter((key) => !LEAD_SUMMARY_KEYS.has(key))
-                        .map((key) => (
-                          <div key={key} className="rounded-lg bg-[#fbfafe] p-3">
-                            <p className="text-xs font-black uppercase tracking-wide text-legacy-muted">{formatFieldLabel(key)}</p>
-                            <p className="mt-1 text-sm text-legacy-ink">{formatFieldValue(lead[key])}</p>
-                          </div>
-                        ))}
-                    </div>
-                    {lead.raw_payload ? (
-                      <details className="mt-4 rounded-lg border border-legacy-silver p-3">
-                        <summary className="cursor-pointer text-xs font-black text-legacy-purple">Raw submission payload (all original answers)</summary>
-                        <pre className="mt-2 overflow-auto whitespace-pre-wrap text-xs text-legacy-muted">{JSON.stringify(lead.raw_payload, null, 2)}</pre>
-                      </details>
-                    ) : null}
-                  </div>
-                ) : null}
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-    </>
-  );
+function getExtraFields(lead: any): { key: string; value: any }[] {
+const fields: { key: string; value: any }[] = [];
+Object.keys(lead)
+.filter((key) => !LEAD_SUMMARY_KEYS.has(key))
+.forEach((key) => fields.push({ key, value: lead[key] }));
+
+let payload: any = lead.raw_payload;
+if (typeof payload === "string") {
+try { payload = JSON.parse(payload); } catch { payload = null; }
+}
+if (payload && typeof payload === "object") {
+Object.keys(payload)
+.filter((key) => !RAW_PAYLOAD_SKIP_KEYS.has(key))
+.forEach((key) => fields.push({ key, value: payload[key] }));
+}
+return fields;
+}
+
+return (
+<>
+<PageHeader eyebrow="Admin" title="Leads" description="New intake form submissions. Approve a lead to create their client account and portal access." />
+{error ? <p className="mb-4 rounded-lg bg-red-50 p-3 text-sm text-red-600">{error}</p> : null}
+<section className="soft-panel p-5">
+{loading ? (
+<p className="text-legacy-muted">Loading leads...</p>
+) : leads.length === 0 ? (
+<p className="text-legacy-muted">No leads yet.</p>
+) : (
+<div className="grid gap-3">
+{leads.map((lead) => {
+const extraFields = expandedId === lead.id ? getExtraFields(lead) : [];
+return (
+<div key={lead.id} className="rounded-xl border border-legacy-silver p-4">
+<div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
+<div>
+<p className="font-black text-legacy-ink">{lead.full_name}</p>
+<p className="text-sm text-legacy-muted">{lead.email} • {lead.phone} • {lead.city}, {lead.state}</p>
+<p className="mt-2 text-xs text-legacy-muted">Services: {Array.isArray(lead.services_needed) ? lead.services_needed.join(", ") : "-"} • Submitted {new Date(lead.submitted_at).toLocaleString()}</p>
+</div>
+<div className="flex items-center gap-3">
+<StatusPill tone={lead.status === "Approved" ? "green" : "amber"}>{lead.status}</StatusPill>
+<button onClick={() => toggleExpanded(lead.id)} className="rounded-lg border border-legacy-silver px-4 py-2 text-sm font-black text-legacy-ink">
+{expandedId === lead.id ? "Hide full answers" : "View full answers"}
+</button>
+{lead.status !== "Approved" ? (
+<button onClick={() => approve(lead.id)} disabled={busyId === lead.id} className="rounded-lg bg-legacy-purple px-4 py-2 text-sm font-black text-white disabled:opacity-50">
+{busyId === lead.id ? "Approving..." : "Approve"}</button>
+) : null}
+</div>
+</div>
+{expandedId === lead.id ? (
+<div className="mt-4 border-t border-legacy-silver pt-4">
+<div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+{extraFields.map(({ key, value }) => (
+<div key={key} className="rounded-lg bg-[#fbfafe] p-3">
+<p className="text-xs font-black uppercase tracking-wide text-legacy-muted">{formatFieldLabel(key)}</p>
+<p className="mt-1 text-sm text-legacy-ink">{formatFieldValue(value)}</p>
+</div>
+))}
+</div>
+{lead.raw_payload ? (
+<details className="mt-4 rounded-lg border border-legacy-silver p-3">
+<summary className="cursor-pointer text-xs font-black text-legacy-purple">Raw submission payload (all original answers)</summary>
+<pre className="mt-2 overflow-auto whitespace-pre-wrap text-xs text-legacy-muted">{JSON.stringify(lead.raw_payload, null, 2)}</pre>
+</details>
+) : null}
+</div>
+) : null}
+</div>
+);
+})}
+</div>
+)}
+</section>
+</>
+);
 }
 
 function AdminClients() {
