@@ -6,6 +6,7 @@ import { useState } from "react";
 import {
 Bell,
 CalendarDays,
+ClipboardList,
 CreditCard,
 FileSignature,
 FileText,
@@ -38,6 +39,7 @@ const clientItems: NavItem[] = [
 { id: "status", label: "Service Status", icon: ShieldCheck },
 { id: "appointments", label: "Appointments", icon: CalendarDays },
 { id: "billing", label: "Billing & Payments", icon: CreditCard },
+{ id: "bookkeeping", label: "Bookkeeping Questionnaire", icon: ClipboardList },
 { id: "resources", label: "Resources", icon: FileText },
 { id: "profile", label: "Profile", icon: User }
 ];
@@ -59,15 +61,22 @@ export function PortalShell({
 role,
 active,
 onChange,
-children
+children,
+showBookkeeping
 }: {
 role: UserRole;
 active: string;
 onChange: (section: string) => void;
 children: React.ReactNode;
+showBookkeeping?: boolean;
 }) {
 const [open, setOpen] = useState(false);
-const items = role === "admin" ? adminItems : clientItems;
+const items =
+role === "admin"
+? adminItems
+: showBookkeeping
+? clientItems
+: clientItems.filter((i) => i.id !== "bookkeeping");
 
 function selectSection(section: string) {
 onChange(section);
