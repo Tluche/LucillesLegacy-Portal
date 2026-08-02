@@ -5,6 +5,14 @@
 :root {
   --background: #ffffff;
   --foreground: #1d1a24;
+
+  /* Bookkeeping Onboarding Questionnaire theme (components/bookkeeping) */
+  --ll-purple: #6d3fb5;
+  --ll-purple-deep: #42255f;
+  --ll-silver: #e7e8ee;
+  --ll-silver-light: #f4efff;
+  --ll-ink: #1d1a24;
+  --ll-surface: #ffffff;
 }
 
 * {
