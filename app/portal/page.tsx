@@ -35,6 +35,8 @@ import { ClientBilling } from "@/components/billing-client";
 import { AdminBillingPanel } from "@/components/billing-admin";
 import { AdminMasterDocuments } from "@/components/admin-master-documents";
 import { AdminSignatures } from "@/components/admin-signatures";
+import BookkeepingQuestionnaire from "@/components/bookkeeping/BookkeepingQuestionnaire";
+import AdminBookkeepingSummary from "@/components/bookkeeping/AdminBookkeepingSummary";
 
 const categories: DocumentCategory[] = ["Tax", "Credit", "Bookkeeping", "Life Insurance", "General"];
 
@@ -44,6 +46,10 @@ const [active, setActive] = useState("dashboard");
 const [realName, setRealName] = useState<string | null>(null);
 const [realServices, setRealServices] = useState<ServiceTracker[]>([]);
 const [realClientId, setRealClientId] = useState<string | null>(null);
+const [realUserId, setRealUserId] = useState<string | null>(null);
+const [realEmail, setRealEmail] = useState<string | null>(null);
+const [realPhone, setRealPhone] = useState<string | null>(null);
+const [realAddress, setRealAddress] = useState<string | null>(null);
 const [realNotifications, setRealNotifications] = useState<{ id: string; title: string; text: string }[]>([]);
 const [realAppointments, setRealAppointments] = useState<{ id: string; title: string; date: string; time: string; status: string }[]>([]);
 
@@ -55,11 +61,16 @@ supabase.auth.getUser().then(async (result) => {
 const user = result.data.user;
 if (!user) return;
 
-const profileResult = await supabase.from("profiles").select("role, full_name").eq("id", user.id).single();
+setRealUserId(user.id);
+
+const profileResult = await supabase.from("profiles").select("role, full_name, email, phone, address").eq("id", user.id).single();
 const profile = profileResult.data;
 if (!profile) return;
 
 setRealName(profile.full_name);
+setRealEmail(profile.email);
+setRealPhone(profile.phone);
+setRealAddress(profile.address);
 setRole(profile.role as UserRole);
 setActive(profile.role === "admin" ? "admin" : "dashboard");
 
@@ -119,13 +130,16 @@ status: row.status
 });
 }, []);
 
+const bookkeepingSupabase = useMemo(() => supabaseBrowser(), []);
+const isBookkeepingClient = realServices.some((service) => service.key === "bookkeeping");
+
 const displayName = realName || clientProfile.name;
 const displayServices = realServices.length > 0 ? realServices : serviceTrackers;
 const displayNotifications = realClientId ? realNotifications : notifications;
 const displayAppointments = realClientId ? realAppointments : appointments;
 
 return (
-<PortalShell role={role} active={active} onChange={setActive}>
+<PortalShell role={role} active={active} onChange={setActive} showBookkeeping={isBookkeepingClient}>
 <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
 <div>
 <p className="text-sm font-bold text-legacy-muted">Signed in as</p>
@@ -144,6 +158,20 @@ return (
   {active === "status" && <ServiceStatus clientId={realClientId} />}
 {active === "appointments" && <Appointments appointments={displayAppointments} clientId={realClientId} />}
 {active === "billing" && <ClientBilling clientId={realClientId} />}
+{active === "bookkeeping" && isBookkeepingClient && bookkeepingSupabase && realUserId && (
+<BookkeepingQuestionnaire
+supabase={bookkeepingSupabase}
+clientProfile={{
+id: realUserId,
+name: displayName,
+email: realEmail,
+phone: realPhone,
+businessName: null,
+address: realAddress
+}}
+onExit={() => setActive("dashboard")}
+/>
+)}
 {active === "resources" && <Resources />}
 {active === "profile" && <Profile />}
 </>
@@ -1921,6 +1949,7 @@ const [profileMessageText, setProfileMessageText] = useState("");
 const [profileNotesDraft, setProfileNotesDraft] = useState("");
 const [savingNotes, setSavingNotes] = useState(false);
 const [profileUserId, setProfileUserId] = useState<string | null>(null);
+const [profileQuestionnaire, setProfileQuestionnaire] = useState<any>(null);
 const [profileDependents, setProfileDependents] = useState<any[]>([]);
 const [newDependentName, setNewDependentName] = useState("");
 const [newDependentDob, setNewDependentDob] = useState("");
@@ -2064,7 +2093,7 @@ async function openProfile(clientId: string) {
     const [profileResult, docsResult, threadResult, dependentsResult, beneficiariesResult] = await Promise.all([
     supabase
       .from("clients")
-      .select("id, status, client_number, client_notes, profiles(full_name, email, phone, address, emergency_contact, preferred_contact)")
+      .select("id, status, client_number, client_notes, profile_id, profiles(full_name, email, phone, address, emergency_contact, preferred_contact)")
       .eq("id", clientId)
       .single(),
     supabase
@@ -2094,12 +2123,24 @@ async function openProfile(clientId: string) {
   setProfileThread(threadResult.data || []);
   setProfileDependents(dependentsResult.data || []);
   setProfileBeneficiaries(beneficiariesResult.data || []);
+  const bkProfileId = (profileResult.data as any)?.profile_id;
+  if (bkProfileId) {
+    const bkResult = await supabase
+      .from("bookkeeping_questionnaires")
+      .select("responses, status, submitted_at")
+      .eq("client_id", bkProfileId)
+      .maybeSingle();
+    setProfileQuestionnaire(bkResult.data || null);
+  } else {
+    setProfileQuestionnaire(null);
+  }
   setProfileLoading(false);
 }
 
 function closeProfile() {
   setProfileClientId(null);
   setProfileInfo(null);
+  setProfileQuestionnaire(null);
   setProfileDocs([]);
   setProfileThread([]);
   setProfileNotesDraft("");
@@ -2568,6 +2609,21 @@ className="rounded-lg border border-legacy-silver px-3 py-2 text-sm font-bold te
               </button>
             </div>
           </div>
+        </div>
+        <div className="lg:col-span-2">
+          {profileQuestionnaire ? (
+            <AdminBookkeepingSummary
+              responses={profileQuestionnaire.responses || {}}
+              status={profileQuestionnaire.status}
+              submittedAt={profileQuestionnaire.submitted_at}
+              clientName={profileInfo?.profiles?.full_name}
+              businessName={null}
+            />
+          ) : (
+            <div className="rounded-xl border border-legacy-silver p-4">
+              <p className="text-sm text-legacy-muted">No bookkeeping questionnaire submitted yet.</p>
+            </div>
+          )}
         </div>
         <div className="flex h-[28rem] flex-col rounded-xl border border-legacy-silver p-4">
           <p className="mb-2 font-black text-legacy-ink">Message thread</p>
